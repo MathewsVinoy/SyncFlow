@@ -124,3 +124,6 @@ install(TARGETS syncflow_common syncflow_platform syncflow_discovery
         syncflow_transfer syncflow_watcher syncflow_sync
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)
+
+# Install man page
+install(FILES docs/syncflow.1 DESTINATION share/man/man1)
