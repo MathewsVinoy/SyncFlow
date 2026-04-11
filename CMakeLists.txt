@@ -24,9 +24,25 @@ endif()
 
 # Compiler flags for optimization
 if(MSVC)
-    add_compile_options(/W4 /O2)
+    # MSVC-specific compiler flags
+    add_compile_options(/W4 /O2 /Oi /Ot)
+    # Add NOMINMAX to prevent Windows.h min/max macros
+    add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    # MSVC runtime library
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     add_compile_options(-Wall -Wextra -Wpedantic -O2)
+    if(SYNCFLOW_LINUX)
+        add_compile_options(-pthread)
+    endif()
+endif()
+
+# Windows-specific configuration
+if(SYNCFLOW_WINDOWS)
+    # Minimum Windows version: Windows 7
+    add_compile_definitions(_WIN32_WINNT=0x0601)
+    # Enable advanced networking features
+    add_compile_definitions(_WINSOCK_DEPRECATED_NO_WARNINGS)
 endif()
 
 # Include directories
@@ -60,8 +76,11 @@ if(SYNCFLOW_LINUX)
 endif()
 
 if(SYNCFLOW_WINDOWS)
-    target_sources(syncflow_platform PRIVATE src/platform/windows/file_watcher.cpp)
-    target_link_libraries(syncflow_platform PUBLIC ws2_32 Shlwapi)
+    target_sources(syncflow_platform PRIVATE 
+        src/platform/windows/file_watcher.cpp
+        src/platform/windows/network_config.cpp
+    )
+    target_link_libraries(syncflow_platform PUBLIC ws2_32 Shlwapi iphlpapi)
 endif()
 
 if(SYNCFLOW_MACOS)
