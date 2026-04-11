@@ -1,116 +1,175 @@
-# SyncFlow
+# Syncflow - High-Performance Cross-Platform File Synchronization
 
-SyncFlow is a Rust peer-to-peer LAN file synchronization tool.
+![Syncflow](https://img.shields.io/badge/version-0.1.0-blue) ![C++](https://img.shields.io/badge/language-C++17-blue) ![License](https://img.shields.io/badge/license-MIT-green)
 
-It syncs one folder between devices without a central server.
+**Syncflow** is a high-performance, peer-to-peer file synchronization system designed for seamless file sharing across devices on the same network. Similar to AirDrop or Quick Share, it enables fast, secure, and efficient file transfers without relying on central servers.
 
-## Architecture
+## 🚀 Features
 
-### Modules
+- **🔍 Device Discovery**: Automatic UDP broadcast-based discovery of devices on your network
+- **🤝 Peer-to-Peer**: Direct TCP connections for transfers without intermediaries
+- **📦 Resumable Transfers**: Interrupt-tolerant file transfers with automatic resume
+- **⚡ High Performance**: Multi-threaded transfers with configurable concurrency
+- **💾 Smart Sync**: Bidirectional folder synchronization with conflict resolution
+- **🔔 File Watching**: Real-time detection of file changes using platform-specific APIs (inotify, FSEvents, ReadDirectoryChangesW)
+- **🔐 Secure**: Support for device pairing and encrypted communications (planned)
+- **🖥️ Cross-Platform**: Windows, Linux, macOS, and Android (via NDK)
+- **🎯 Minimal Dependencies**: Lean implementation using only standard libraries + platform APIs
 
-- `file_watcher`
-  - Watches filesystem events (`create`, `modify`, `delete`) using `notify`.
-  - Converts local events into sync messages.
+## 🏗️ Architecture
 
-- `sync_engine`
-  - Core reconciliation logic.
-  - Scans local manifest, compares with remote manifest, applies conflict policy.
-  - Applies incoming chunks and finalizes files with integrity verification.
+Syncflow follows a **modular, layered architecture** with clear separation of concerns. See **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** for detailed design.
 
-- `network`
-  - Message protocol (`serde` + `bincode`).
-  - Length-prefixed framed TCP message read/write.
-  - Basic device authentication via shared token in handshake.
+Core modules:
 
-- `transfer`
-  - Chunked file sender.
-  - Supports resume from byte offset.
-  - Final chunk includes SHA-256 for integrity verification.
+- **Discovery**: UDP broadcast-based device detection
+- **Transfer**: TCP file transfer with chunking and resume
+- **Watcher**: Platform-specific file change monitoring
+- **Sync**: Bidirectional sync with conflict resolution
+- **Platform**: Cross-platform abstraction layer
+- **Common**: Utilities (logging, serialization, hashing)
+- **CLI**: Command-line interface
 
-- `discovery`
-  - UDP broadcast peer discovery on LAN.
-  - Finds peers automatically and triggers TCP connection.
+## 🔌 Protocol Specification
 
-- `utils`
-  - Safe path normalization/join helpers.
-  - SHA-256 hashing helpers.
-  - Time conversion helpers.
+### Device Discovery (UDP Port 15947)
 
-## Conflict strategy
+- Broadcast every 5 seconds
+- Timeout after 15 seconds of inactivity
+- Binary format with magic number and version
 
-Current policy: **last-write-wins** using `(modified_ts, sha256)`.
+### File Transfer (TCP Port 15948)
 
-- If timestamps differ, newer timestamp wins.
-- If equal timestamp and different content, lexicographically larger hash wins (deterministic tie-break).
+- Custom binary protocol (not HTTP/REST)
+- 1 MB chunks with CRC32 validation
+- Support for concurrent transfers and resume
+- Compression flag for optional data compression
 
-## MVP and iterative improvements
+## 📋 Quick Start
 
-This implementation includes the requested steps:
+### Prerequisites
 
-1. MVP: TCP sync between peers for one folder.
-2. File watching: real-time local change propagation.
-3. Chunked transfer + resume + SHA-256 verification.
-4. Peer discovery: UDP broadcast LAN discovery.
-
-## Build
-
-Requirements:
-
-- Rust stable (1.75+ recommended)
-
-Build:
+**Linux:**
 
 ```bash
-cargo build --release
+sudo apt-get install build-essential cmake git
 ```
 
-## Run
-
-### Terminal A (Device 1)
+**macOS:**
 
 ```bash
-cargo run -- \
-	--dir ./sync_a \
-	--listen 0.0.0.0:7878 \
-	--device-name laptop \
-	--token my-shared-token
+brew install cmake
 ```
 
-### Terminal B (Device 2, manual peer)
+**Windows:**
+
+- Visual Studio 2019+ or MinGW-w64
+- CMake 3.20+
+
+### Build & Install
 
 ```bash
-cargo run -- \
-	--dir ./sync_b \
-	--listen 0.0.0.0:7879 \
-	--peer 192.168.1.10:7878 \
-	--device-name desktop \
-	--token my-shared-token
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+sudo make install
 ```
 
-You can omit `--peer` and rely on discovery (enabled by default).
+### Usage Examples
 
-## CLI options
+**List nearby devices:**
 
-- `--dir <PATH>`: folder to sync
-- `--listen <IP:PORT>`: TCP listen address (default `0.0.0.0:7878`)
-- `--peer <IP:PORT>`: manually connect to peer (repeatable)
-- `--device-name <NAME>`: local device label
-- `--token <STRING>`: shared auth token
-- `--watch <true|false>`: enable file watching (default `true`)
-- `--discover <true|false>`: enable discovery (default `true`)
-- `--discovery-port <PORT>`: UDP discovery port (default `9999`)
+```bash
+syncflow list-devices
+```
 
-## Security notes
+**Send a file:**
 
-- Current implementation uses **token-based peer authentication**.
-- For production hardening, next step is adding TLS (e.g. `rustls`) and cert pinning.
+```bash
+syncflow send /path/to/file device-name
+```
 
-## Limitations (current)
+**Show transfer status:**
 
-- Delete reconciliation from historical state is event-driven (watch/delete notice), not a persisted tombstone DB.
-- No compression yet.
-- No bandwidth throttling/QoS yet.
+```bash
+syncflow status
+```
 
-## License
+**Add folder to sync:**
 
-Apache License 2.0
+```bash
+syncflow add-folder ~/Documents device-id ~/RemoteDocuments --mode bidirectional
+```
+
+## 📚 Documentation
+
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive design documentation, algorithms, protocol details
+- **[BUILD_AND_USAGE.md](docs/BUILD_AND_USAGE.md)** - Build instructions, complete command reference, troubleshooting
+
+## 📁 Project Structure
+
+```
+syncflow/
+├── src/
+│   ├── common/              # Logger, utilities, types
+│   ├── platform/            # Cross-platform abstraction
+│   ├── discovery/           # Device discovery via UDP
+│   ├── transfer/            # File transfer protocol & logic
+│   ├── watcher/             # File system monitoring
+│   ├── sync/                # Sync engine & conflict resolution
+│   └── cli/                 # CLI interface
+├── include/                 # Public headers
+├── tests/                   # Unit tests
+├── docs/                    # Complete documentation
+└── CMakeLists.txt          # CMake build configuration
+```
+
+## 🧪 Testing
+
+```bash
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+make
+ctest --verbose
+```
+
+## 🚀 Performance Targets
+
+| Metric                | Target          |
+| --------------------- | --------------- |
+| Device Discovery Time | <5 seconds      |
+| Transfer Throughput   | >100 MB/s (LAN) |
+| Memory per Transfer   | <50 MB          |
+| Idle CPU              | <1%             |
+| Reconnect Time        | <2 seconds      |
+
+## 🔐 Security
+
+- Device pairing with handshake verification
+- CRC32 checksum validation for data integrity
+- File permissions preservation
+- Optional encryption support (planned)
+
+## 🤖 Android Integration
+
+Syncflow can be integrated into Android apps via NDK with JNI bindings. See [ARCHITECTURE.md](docs/ARCHITECTURE.md#android-integration-via-ndk) for details.
+
+## 📄 License
+
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see documentation for code style guidelines and testing requirements.
+
+## 📞 Support
+
+For issues and questions:
+
+- Check [BUILD_AND_USAGE.md](docs/BUILD_AND_USAGE.md#troubleshooting) troubleshooting guide
+- Review [ARCHITECTURE.md](docs/ARCHITECTURE.md) for design details
+- Open GitHub issues for bugs and feature requests
+
+---
+
+**Made with ❤️ for seamless file sharing** | [Documentation](docs/ARCHITECTURE.md)

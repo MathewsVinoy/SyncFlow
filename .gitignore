@@ -38,6 +38,33 @@ _deps
 
 CMakeUserPresets.json
 
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.user
+.DS_Store
+Thumbs.db
+
+# Build directories
 *-prefix/
 checkmate/
+build/
+Build/
+cmake-build-debug/
+cmake-build-release/
+out/
+doc/
 
+# Test outputs
+Testing/
+*.gcov
+coverage/
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.backup
