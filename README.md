@@ -105,6 +105,7 @@ syncflow add-folder ~/Documents device-id ~/RemoteDocuments --mode bidirectional
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive design documentation, algorithms, protocol details
 - **[BUILD_AND_USAGE.md](docs/BUILD_AND_USAGE.md)** - Build instructions, complete command reference, troubleshooting
+- **[syncflow(1)](docs/syncflow.1)** - Manual page with command reference
 
 ## 📁 Project Structure
 

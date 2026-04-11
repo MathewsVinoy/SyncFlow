@@ -1,0 +1,141 @@
+.TH SYNCFLOW 1 "April 2026" "syncflow 0.1.0" "User Commands"
+.SH NAME
+syncflow \- High-performance cross-platform file synchronization system
+.SH SYNOPSIS
+.B syncflow
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B syncflow
+is a high-performance, peer-to-peer file synchronization system designed for seamless file sharing across devices on the same network. Similar to AirDrop or Quick Share, it enables fast, secure, and efficient file transfers without relying on central servers.
+.PP
+Features include automatic device discovery via UDP broadcast, resumable TCP file transfers, bidirectional folder synchronization with conflict resolution, real-time file watching, and cross-platform support (Windows, Linux, macOS, Android).
+.SH COMMANDS
+.SS Device Management
+.TP
+.B list-devices
+List all discovered devices on the network.
+.TP
+.B status
+Show current status including connected devices and active transfers.
+.SS File Transfer
+.TP
+.B send \fI<file>\fR \fI<device-id>\fR
+Send a file to a specific device.
+.TP
+.B receive [\fIdestination-path\fR]
+Start receiving a file. If \fIdestination-path\fR is specified, save the file there.
+.TP
+.B list-transfers
+List all active file transfers with their progress.
+.TP
+.B pause \fI<session-id>\fR
+Pause an active file transfer.
+.TP
+.B resume \fI<session-id>\fR
+Resume a paused file transfer.
+.TP
+.B cancel \fI<session-id>\fR
+Cancel an active file transfer.
+.SS Folder Synchronization
+.TP
+.B add-folder \fI<local-path>\fR \fI<device-id>\fR \fI<remote-path>\fR [\fB--mode\fR \fImode\fR]
+Add a folder to synchronize with a remote device.
+.br
+Supported modes: bidirectional (default), unidirectional
+.TP
+.B list-folders
+List all folders currently being synchronized.
+.TP
+.B remove-folder \fI<local-path>\fR
+Remove a folder from synchronization.
+.SS Daemon Control
+.TP
+.B start [\fB--background\fR]
+Start the sync daemon. Use \fB--background\fR to run in the background.
+.TP
+.B stop
+Stop the running sync daemon.
+.SS Configuration
+.TP
+.B config set \fI<key>\fR \fI<value>\fR
+Set a configuration option.
+.br
+Common options:
+.RS
+.TP
+.B conflict-strategy
+Set conflict resolution strategy: overwrite, skip, version, ask
+.TP
+.B enable-compression
+Enable/disable compression: true, false
+.TP
+.B transfer-threads
+Set number of transfer threads (integer)
+.RE
+.TP
+.B config list
+Show all current configuration settings.
+.SS Help
+.TP
+.B --help\fR, \fB-h\fR, \fBhelp
+Show help information and usage.
+.SH OPTIONS
+.TP
+.B --mode \fImode\fR
+Specify synchronization mode for add-folder command.
+.br
+Supported values: bidirectional, unidirectional
+.TP
+.B --background
+Run daemon in background (with start command).
+.SH EXAMPLES
+.TP
+List nearby devices:
+.B syncflow list-devices
+.TP
+Send a file:
+.B syncflow send /home/user/document.pdf "MacBook-Pro"
+.TP
+Check transfer status:
+.B syncflow status
+.TP
+Add folder for bidirectional sync:
+.B syncflow add-folder ~/Documents "Ubuntu-Laptop" ~/RemoteDocs --mode bidirectional
+.TP
+Start daemon in background:
+.B syncflow start --background
+.TP
+Configure conflict resolution:
+.B syncflow config set conflict-strategy version
+.SH PROTOCOL
+.B syncflow
+uses custom binary protocols:
+.TP
+.B Device Discovery
+UDP broadcast on port 15947, timeout after 15 seconds
+.TP
+.B File Transfer
+TCP connections on port 15948, 1MB chunks with CRC32 validation
+.SH ENVIRONMENT
+No environment variables are currently used.
+.SH FILES
+.TP
+.I /usr/local/bin/syncflow
+Main executable
+.TP
+.I /usr/local/lib/libsyncflow_*.a
+Static libraries
+.TP
+.I /usr/local/include/syncflow/
+Header files for development
+.SH SEE ALSO
+.BR rsync (1),
+.BR scp (1),
+.BR sftp (1)
+.SH BUGS
+Report bugs at the project repository.
+.SH AUTHOR
+syncflow development team
+.SH LICENSE
+MIT License

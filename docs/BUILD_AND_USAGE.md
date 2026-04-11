@@ -44,6 +44,7 @@ This installs:
 - Executable: `/usr/local/bin/syncflow`
 - Libraries: `/usr/local/lib/libsyncflow_*.a`
 - Headers: `/usr/local/include/syncflow/`
+- Manual page: `/usr/local/share/man/man1/syncflow.1`
 
 ---
 
