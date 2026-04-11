@@ -173,4 +173,4 @@ For issues and questions:
 
 ---
 
-**Made with ❤️ for seamless file sharing** | [Documentation](docs/ARCHITECTURE.md)
+[Documentation](docs/ARCHITECTURE.md)
