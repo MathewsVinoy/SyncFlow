@@ -30,6 +30,16 @@ std::filesystem::path discovery_binary_path(const char* argv0) {
 #endif
 }
 
+std::filesystem::path transfer_binary_path(const char* argv0) {
+    std::filesystem::path cli_path = std::filesystem::absolute(argv0);
+    const auto dir = cli_path.parent_path();
+#ifdef _WIN32
+    return dir / "syncflow_transfer.exe";
+#else
+    return dir / "syncflow_transfer";
+#endif
+}
+
 bool write_pid_file(unsigned long long pid) {
     std::ofstream out(pid_file_path(), std::ios::trunc);
     if (!out.is_open()) {
@@ -189,7 +199,9 @@ int list_devices(const std::filesystem::path& server_bin) {
 }
 
 void print_usage() {
-    std::cout << "Usage: syncflow <start|stop|list-devices|status>\n";
+    std::cout << "Usage: syncflow <start|stop|list-devices|status|recv-file|send-file>\n"
+              << "  recv-file [port] [output_dir]\n"
+              << "  send-file <ip> [port] <file_path>\n";
 }
 
 }  // namespace
@@ -202,14 +214,14 @@ int main(int argc, char* argv[]) {
 
     const std::string command = argv[1];
     const auto server_bin = discovery_binary_path(argv[0]);
-
-    if (!std::filesystem::exists(server_bin)) {
-        std::cerr << "Discovery binary not found: " << server_bin << "\n";
-        std::cerr << "Build target syncflow_discovery first.\n";
-        return 1;
-    }
+    const auto transfer_bin = transfer_binary_path(argv[0]);
 
     if (command == "start") {
+        if (!std::filesystem::exists(server_bin)) {
+            std::cerr << "Discovery binary not found: " << server_bin << "\n";
+            std::cerr << "Build target syncflow_discovery first.\n";
+            return 1;
+        }
         unsigned long long pid = 0;
         if (read_pid_file(pid) && is_process_running(pid)) {
             std::cout << "syncflow discovery already running (pid=" << pid << ")\n";
@@ -224,10 +236,56 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "list-devices") {
+        if (!std::filesystem::exists(server_bin)) {
+            std::cerr << "Discovery binary not found: " << server_bin << "\n";
+            std::cerr << "Build target syncflow_discovery first.\n";
+            return 1;
+        }
         return list_devices(server_bin);
     }
 
+    if (command == "recv-file") {
+        if (!std::filesystem::exists(transfer_bin)) {
+            std::cerr << "Transfer binary not found: " << transfer_bin << "\n";
+            return 1;
+        }
+
+        std::string cmd = "\"" + transfer_bin.string() + "\" recv";
+        if (argc >= 3) {
+            cmd += " \"" + std::string(argv[2]) + "\"";
+        }
+        if (argc >= 4) {
+            cmd += " \"" + std::string(argv[3]) + "\"";
+        }
+        return std::system(cmd.c_str());
+    }
+
+    if (command == "send-file") {
+        if (!std::filesystem::exists(transfer_bin)) {
+            std::cerr << "Transfer binary not found: " << transfer_bin << "\n";
+            return 1;
+        }
+
+        if (argc < 4) {
+            print_usage();
+            return 1;
+        }
+
+        std::string cmd = "\"" + transfer_bin.string() + "\" send \"" + std::string(argv[2]) + "\"";
+        if (argc == 4) {
+            cmd += " \"" + std::string(argv[3]) + "\"";
+        } else {
+            cmd += " \"" + std::string(argv[3]) + "\" \"" + std::string(argv[4]) + "\"";
+        }
+        return std::system(cmd.c_str());
+    }
+
     if (command == "status") {
+        if (!std::filesystem::exists(server_bin)) {
+            std::cerr << "Discovery binary not found: " << server_bin << "\n";
+            std::cerr << "Build target syncflow_discovery first.\n";
+            return 1;
+        }
         unsigned long long pid = 0;
         if (read_pid_file(pid) && is_process_running(pid)) {
             std::cout << "syncflow discovery is running (pid=" << pid << ")\n";

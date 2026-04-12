@@ -14,6 +14,10 @@ add_executable(syncflow
     src/cli/syncflow_cli.cpp
 )
 
+add_executable(syncflow_transfer
+    src/transfer/file_transfer.cpp
+)
+
 target_include_directories(syncflow_discovery
     PRIVATE
         include
@@ -24,9 +28,15 @@ target_include_directories(syncflow
         include
 )
 
+target_include_directories(syncflow_transfer
+    PRIVATE
+        include
+)
+
 if(WIN32)
     target_link_libraries(syncflow_discovery PRIVATE ws2_32)
     target_link_libraries(syncflow PRIVATE ws2_32)
+    target_link_libraries(syncflow_transfer PRIVATE ws2_32)
 endif()
 
 # Convenience run targets:
@@ -63,6 +73,13 @@ add_custom_target(run_cli_stop
 add_custom_target(run_cli_list_devices
     COMMAND syncflow list-devices
     DEPENDS syncflow syncflow_discovery
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    USES_TERMINAL
+)
+
+add_custom_target(run_transfer_recv
+    COMMAND syncflow_transfer recv
+    DEPENDS syncflow_transfer
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     USES_TERMINAL
 )
