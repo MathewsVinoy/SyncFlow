@@ -1,0 +1,242 @@
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <csignal>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+namespace {
+
+std::filesystem::path pid_file_path() {
+    return std::filesystem::temp_directory_path() / "syncflow_discovery.pid";
+}
+
+std::filesystem::path discovery_binary_path(const char* argv0) {
+    std::filesystem::path cli_path = std::filesystem::absolute(argv0);
+    const auto dir = cli_path.parent_path();
+#ifdef _WIN32
+    return dir / "syncflow_discovery.exe";
+#else
+    return dir / "syncflow_discovery";
+#endif
+}
+
+bool write_pid_file(unsigned long long pid) {
+    std::ofstream out(pid_file_path(), std::ios::trunc);
+    if (!out.is_open()) {
+        return false;
+    }
+    out << pid;
+    return true;
+}
+
+bool read_pid_file(unsigned long long& pid) {
+    std::ifstream in(pid_file_path());
+    if (!in.is_open()) {
+        return false;
+    }
+    in >> pid;
+    return in.good() || in.eof();
+}
+
+void remove_pid_file() {
+    std::error_code ec;
+    std::filesystem::remove(pid_file_path(), ec);
+}
+
+#ifdef _WIN32
+bool is_process_running(unsigned long long pid) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!process) {
+        return false;
+    }
+
+    DWORD code = 0;
+    const BOOL ok = GetExitCodeProcess(process, &code);
+    CloseHandle(process);
+    return ok && code == STILL_ACTIVE;
+}
+
+int spawn_server(const std::filesystem::path& server_bin) {
+    std::string cmd = "\"" + server_bin.string() + "\" server";
+
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+
+    BOOL ok = CreateProcessA(
+        nullptr,
+        cmd.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+        nullptr,
+        nullptr,
+        &si,
+        &pi);
+
+    if (!ok) {
+        return 1;
+    }
+
+    const unsigned long long pid = static_cast<unsigned long long>(pi.dwProcessId);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    if (!write_pid_file(pid)) {
+        return 1;
+    }
+
+    std::cout << "syncflow discovery started (pid=" << pid << ")\n";
+    return 0;
+}
+
+int stop_server() {
+    unsigned long long pid = 0;
+    if (!read_pid_file(pid)) {
+        std::cerr << "No running server found (pid file missing).\n";
+        return 1;
+    }
+
+    HANDLE process = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!process) {
+        std::cerr << "Server process not found. Cleaning stale pid file.\n";
+        remove_pid_file();
+        return 1;
+    }
+
+    if (!TerminateProcess(process, 0)) {
+        CloseHandle(process);
+        std::cerr << "Failed to stop process pid=" << pid << "\n";
+        return 1;
+    }
+
+    CloseHandle(process);
+    remove_pid_file();
+    std::cout << "syncflow discovery stopped (pid=" << pid << ")\n";
+    return 0;
+}
+#else
+bool is_process_running(unsigned long long pid) {
+    if (pid == 0) {
+        return false;
+    }
+    return kill(static_cast<pid_t>(pid), 0) == 0;
+}
+
+int spawn_server(const std::filesystem::path& server_bin) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "fork failed\n";
+        return 1;
+    }
+
+    if (pid == 0) {
+        if (setsid() < 0) {
+            std::exit(1);
+        }
+
+        execl(server_bin.c_str(), server_bin.c_str(), "server", nullptr);
+        std::exit(1);
+    }
+
+    if (!write_pid_file(static_cast<unsigned long long>(pid))) {
+        std::cerr << "Failed to write pid file\n";
+        return 1;
+    }
+
+    std::cout << "syncflow discovery started (pid=" << pid << ")\n";
+    return 0;
+}
+
+int stop_server() {
+    unsigned long long pid = 0;
+    if (!read_pid_file(pid)) {
+        std::cerr << "No running server found (pid file missing).\n";
+        return 1;
+    }
+
+    if (!is_process_running(pid)) {
+        std::cerr << "Server process not found. Cleaning stale pid file.\n";
+        remove_pid_file();
+        return 1;
+    }
+
+    if (kill(static_cast<pid_t>(pid), SIGTERM) != 0) {
+        std::cerr << "Failed to stop process pid=" << pid << "\n";
+        return 1;
+    }
+
+    remove_pid_file();
+    std::cout << "syncflow discovery stopped (pid=" << pid << ")\n";
+    return 0;
+}
+#endif
+
+int list_devices(const std::filesystem::path& server_bin) {
+    std::string cmd = "\"" + server_bin.string() + "\" client";
+    return std::system(cmd.c_str());
+}
+
+void print_usage() {
+    std::cout << "Usage: syncflow <start|stop|list-devices|status>\n";
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        print_usage();
+        return 1;
+    }
+
+    const std::string command = argv[1];
+    const auto server_bin = discovery_binary_path(argv[0]);
+
+    if (!std::filesystem::exists(server_bin)) {
+        std::cerr << "Discovery binary not found: " << server_bin << "\n";
+        std::cerr << "Build target syncflow_discovery first.\n";
+        return 1;
+    }
+
+    if (command == "start") {
+        unsigned long long pid = 0;
+        if (read_pid_file(pid) && is_process_running(pid)) {
+            std::cout << "syncflow discovery already running (pid=" << pid << ")\n";
+            return 0;
+        }
+        remove_pid_file();
+        return spawn_server(server_bin);
+    }
+
+    if (command == "stop") {
+        return stop_server();
+    }
+
+    if (command == "list-devices") {
+        return list_devices(server_bin);
+    }
+
+    if (command == "status") {
+        unsigned long long pid = 0;
+        if (read_pid_file(pid) && is_process_running(pid)) {
+            std::cout << "syncflow discovery is running (pid=" << pid << ")\n";
+            return 0;
+        }
+        std::cout << "syncflow discovery is not running\n";
+        return 1;
+    }
+
+    print_usage();
+    return 1;
+}
