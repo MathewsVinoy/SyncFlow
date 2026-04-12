@@ -32,9 +32,18 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     add_compile_options(-Wall -Wextra -Wpedantic -O2)
-    if(SYNCFLOW_LINUX)
+    if(SYNCFLOW_LINUX OR SYNCFLOW_ANDROID)
         add_compile_options(-pthread)
     endif()
+endif()
+
+# Android/Termux-specific configuration
+if(SYNCFLOW_ANDROID)
+    # For Termux, we use standard POSIX APIs
+    # No special Android NDK features required
+    add_compile_definitions(__ANDROID__)
+    # Termux provides glibc-compatible environment
+    message(STATUS "Building for Android/Termux")
 endif()
 
 # Windows-specific configuration
@@ -86,6 +95,18 @@ endif()
 if(SYNCFLOW_MACOS)
     target_sources(syncflow_platform PRIVATE src/platform/macos/file_watcher.cpp)
     target_link_libraries(syncflow_platform PUBLIC "-framework CoreServices")
+endif()
+
+if(SYNCFLOW_ANDROID)
+    target_sources(syncflow_platform PRIVATE 
+        src/platform/android/file_watcher.cpp
+        src/platform/android/network_config.cpp
+    )
+    # Termux provides standard POSIX socket libraries
+    # log and android libraries only if building with NDK
+    if(DEFINED ANDROID_ABI)
+        target_link_libraries(syncflow_platform PUBLIC log android)
+    endif()
 endif()
 
 # Discovery module
