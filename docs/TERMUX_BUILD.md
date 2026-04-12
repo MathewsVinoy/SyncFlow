@@ -7,11 +7,14 @@ This guide explains how to build and run Syncflow on Android using **Termux** wi
 ## Prerequisites
 
 ### 1. Install Termux
+
 - Download **Termux** from F-Droid (recommended) or Google Play Store
 - Grant necessary permissions when prompted
 
 ### 2. Obtain Root Access (Optional but Recommended)
+
 For full functionality:
+
 ```bash
 # Option 1: Using Termux:Boot (recommended)
 pkg install termux-boot
@@ -47,6 +50,7 @@ clang --version
 ### Step 1: Clone or Copy the Repository
 
 **Option A: Clone from Git**
+
 ```bash
 cd ~
 git clone <syncflow-repo-url> syncflow
@@ -54,6 +58,7 @@ cd syncflow
 ```
 
 **Option B: Transfer Files via Termux:Tasker or Syncthing**
+
 ```bash
 # Receive files via Termux
 cd ~
@@ -287,18 +292,21 @@ su -c "~/syncflow/build/syncflow add-folder /sdcard/Syncflow"
 ### Build Issues
 
 **Problem**: CMake not found
+
 ```bash
 # Solution: Install cmake
 pkg install cmake
 ```
 
 **Problem**: C++ compiler errors
+
 ```bash
 # Solution: Install clang
 pkg install clang
 ```
 
 **Problem**: Permission denied when running
+
 ```bash
 # Solution: Ensure file has execute permissions
 chmod +x ~/syncflow/build/syncflow
@@ -309,6 +317,7 @@ su -c "~/syncflow/build/syncflow list-devices"
 ### Runtime Issues
 
 **Problem**: "Address already in use" error
+
 ```bash
 # Solution: Check if syncflow is already running
 ps aux | grep syncflow
@@ -317,6 +326,7 @@ killall syncflow
 ```
 
 **Problem**: Network device discovery fails
+
 ```bash
 # Check network connectivity
 ping 8.8.8.8
@@ -327,6 +337,7 @@ ping 8.8.8.8
 ```
 
 **Problem**: File access denied
+
 ```bash
 # Ensure proper permissions
 su -c "ls -la /path/to/directory"
@@ -421,13 +432,13 @@ rm -f ~/bin/syncflow
 
 ## Summary
 
-| Task | Command |
-|------|---------|
-| Install tools | `pkg install build-essential cmake clang` |
-| Clone repo | `cd ~ && git clone <url> syncflow` |
-| Configure | `cd syncflow/build && cmake .. -DCMAKE_BUILD_TYPE=Release` |
-| Build | `make -j$(nproc)` |
-| Run | `su -c "~/syncflow/build/syncflow list-devices"` |
-| Install | `make install` (installs to $PREFIX) |
+| Task          | Command                                                    |
+| ------------- | ---------------------------------------------------------- |
+| Install tools | `pkg install build-essential cmake clang`                  |
+| Clone repo    | `cd ~ && git clone <url> syncflow`                         |
+| Configure     | `cd syncflow/build && cmake .. -DCMAKE_BUILD_TYPE=Release` |
+| Build         | `make -j$(nproc)`                                          |
+| Run           | `su -c "~/syncflow/build/syncflow list-devices"`           |
+| Install       | `make install` (installs to $PREFIX)                       |
 
 For issues or questions, check the main [BUILD_AND_USAGE.md](../docs/BUILD_AND_USAGE.md) and [ARCHITECTURE.md](../docs/ARCHITECTURE.md) documentation.

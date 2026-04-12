@@ -29,6 +29,7 @@ bash ~/syncflow/scripts/install-termux.sh ~/syncflow
 ```
 
 This automatically:
+
 - Installs build tools
 - Optionally sets up root access
 - Builds Syncflow
@@ -50,20 +51,24 @@ su -c "syncflow send /path/to/file device-id"
 ## What Can It Do?
 
 ### Device Discovery
+
 - Automatically find other Syncflow users on your network
 - Works across WiFi and local networks
 
 ### File Transfer
+
 - Send files from Android to other devices (Linux, Windows, macOS)
 - Receive files from other devices
 - Resume interrupted transfers
 
 ### Folder Synchronization
+
 - Set up automatic two-way sync between folders
 - Handles file conflicts intelligently
 - Works with multiple devices
 
 ### Real-time Monitoring
+
 - Detects file changes instantly (using inotify in Termux)
 - Syncs automatically when files change
 
@@ -108,6 +113,7 @@ bash scripts/run-syncflow.sh list-devices
 ### Option 1: Termux:Boot (Recommended for persistent access)
 
 1. Install `termux-boot` package:
+
    ```bash
    pkg install termux-boot
    ```
@@ -177,13 +183,13 @@ su -c "syncflow start-sync"
 
 ## File Locations
 
-| Item | Location |
-|------|----------|
-| Executable | `~/syncflow/build/syncflow` |
-| Scripts | `~/syncflow/scripts/` |
-| Source code | `~/syncflow/src/` |
-| Configuration | `~/.config/syncflow/` |
-| Data/logs | `~/.local/share/syncflow/` |
+| Item            | Location                             |
+| --------------- | ------------------------------------ |
+| Executable      | `~/syncflow/build/syncflow`          |
+| Scripts         | `~/syncflow/scripts/`                |
+| Source code     | `~/syncflow/src/`                    |
+| Configuration   | `~/.config/syncflow/`                |
+| Data/logs       | `~/.local/share/syncflow/`           |
 | Android storage | `/sdcard/` or `/storage/emulated/0/` |
 
 ## Storage Access
@@ -191,6 +197,7 @@ su -c "syncflow start-sync"
 ### Without Root (Limited Access)
 
 Termux can access user-friendly folders:
+
 ```bash
 ~/storage/downloads      # Downloads
 ~/storage/documents      # Documents
@@ -202,6 +209,7 @@ Termux can access user-friendly folders:
 ### With Root Access
 
 Full access to device storage:
+
 ```bash
 su -c "ls /sdcard/"           # Main storage
 su -c "ls /storage/emulated/0/" # Emulated storage
@@ -213,16 +221,19 @@ su -c "ls /data/"              # System data
 ### Build Errors
 
 **Error**: `Command 'cmake' not found`
+
 ```bash
 pkg install cmake
 ```
 
 **Error**: `C++ compiler errors`
+
 ```bash
 pkg install clang
 ```
 
 **Error**: `make: not found`
+
 ```bash
 pkg install build-essential
 ```
@@ -230,12 +241,14 @@ pkg install build-essential
 ### Runtime Errors
 
 **Error**: `Address already in use`
+
 ```bash
 # Kill existing process
 killall syncflow
 ```
 
 **Error**: `Permission denied`
+
 ```bash
 # Run with root
 su -c "~/syncflow/build/syncflow ..."
@@ -244,6 +257,7 @@ su -c "~/syncflow/build/syncflow ..."
 ```
 
 **Error**: `Peers not discovered`
+
 - Check both devices are on same WiFi network
 - Disable VPN if active
 - Check firewall isn't blocking UDP port 15947
@@ -251,6 +265,7 @@ su -c "~/syncflow/build/syncflow ..."
 ### Performance Issues
 
 **Slow transfers?**
+
 ```bash
 # Rebuild with optimizations
 cd ~/syncflow/build
@@ -259,6 +274,7 @@ make clean && make -j$(nproc)
 ```
 
 **High CPU usage?**
+
 - Reduce number of watched folders
 - Increase sync interval
 - Check logs: `export SYNCFLOW_LOG_LEVEL=DEBUG`
@@ -325,6 +341,7 @@ iwconfig
 ### Set Up Private Network
 
 For large files on local network only:
+
 ```bash
 # Check local IP
 ifconfig wlan0
@@ -422,26 +439,27 @@ make -j$(nproc)
 
 ## Limitations & Known Issues
 
-| Issue | Workaround |
-|-------|-----------|
-| Battery drain during continuous sync | Reduce sync frequency |
-| WiFi dropout breaks transfer | Automatic resume on reconnect |
-| Storage permissions issues | Run with root access |
-| No Bluetooth sync | Use WiFi network instead |
-| Large files slow | Increase chunk size in config |
+| Issue                                | Workaround                    |
+| ------------------------------------ | ----------------------------- |
+| Battery drain during continuous sync | Reduce sync frequency         |
+| WiFi dropout breaks transfer         | Automatic resume on reconnect |
+| Storage permissions issues           | Run with root access          |
+| No Bluetooth sync                    | Use WiFi network instead      |
+| Large files slow                     | Increase chunk size in config |
 
 ## Performance Expectations
 
-| Operation | Typical Time |
-|-----------|-------------|
-| Device discovery | <5 seconds |
-| Small file transfer (1 MB) | <2 seconds |
+| Operation                    | Typical Time  |
+| ---------------------------- | ------------- |
+| Device discovery             | <5 seconds    |
+| Small file transfer (1 MB)   | <2 seconds    |
 | Large file transfer (100 MB) | 10-30 seconds |
-| Folder scan | <5 seconds |
+| Folder scan                  | <5 seconds    |
 
 ## Security Notes
 
 ⚠️ **Important**: When using root access:
+
 - Only grant root to trusted applications
 - Be careful with file permissions
 - Avoid running untrusted code as root
@@ -464,7 +482,7 @@ rm -rf ~/.local/share/syncflow
 
 ## Contributing
 
-Found a bug or want to add features? 
+Found a bug or want to add features?
 
 1. Check [ARCHITECTURE.md](ARCHITECTURE.md) to understand the codebase
 2. Read [BUILD_AND_USAGE.md](BUILD_AND_USAGE.md) for build details

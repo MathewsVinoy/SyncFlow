@@ -24,22 +24,22 @@ su -c "~/syncflow/build/syncflow list-devices"
 
 ## Essential Commands
 
-| Command | Purpose |
-|---------|---------|
-| `list-devices` | Discover peers on network |
-| `send <file> <device>` | Send file to device |
-| `add-folder <path>` | Add folder to sync |
-| `start-sync` | Start synchronization |
-| `show-config` | Show configuration |
-| `--help` | Show help |
+| Command                | Purpose                   |
+| ---------------------- | ------------------------- |
+| `list-devices`         | Discover peers on network |
+| `send <file> <device>` | Send file to device       |
+| `add-folder <path>`    | Add folder to sync        |
+| `start-sync`           | Start synchronization     |
+| `show-config`          | Show configuration        |
+| `--help`               | Show help                 |
 
 ## Root Access Methods
 
-| Method | How | Pros | Cons |
-|--------|-----|------|------|
-| `su` | `su -c "command"` | Pre-built | Requires rooted device |
-| `sudo` | `sudo command` | Modern | Needs installation |
-| Termux:Boot | Auto-start daemon | Persistent | Setup required |
+| Method      | How               | Pros       | Cons                   |
+| ----------- | ----------------- | ---------- | ---------------------- |
+| `su`        | `su -c "command"` | Pre-built  | Requires rooted device |
+| `sudo`      | `sudo command`    | Modern     | Needs installation     |
+| Termux:Boot | Auto-start daemon | Persistent | Setup required         |
 
 ## Environment Setup
 
@@ -63,13 +63,13 @@ chmod +x ~/bin/syncflow
 
 ## File Locations
 
-| Item | Path |
-|------|------|
+| Item   | Path                        |
+| ------ | --------------------------- |
 | Binary | `~/syncflow/build/syncflow` |
-| Source | `~/syncflow/src/` |
-| Config | `~/.config/syncflow/` |
-| Data | `~/.local/share/syncflow/` |
-| Logs | Check config directory |
+| Source | `~/syncflow/src/`           |
+| Config | `~/.config/syncflow/`       |
+| Data   | `~/.local/share/syncflow/`  |
+| Logs   | Check config directory      |
 
 ## Termux Storage Access
 
@@ -86,13 +86,13 @@ su -c "ls /storage/emulated/0"
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| "Command not found" | `pkg install build-essential cmake` |
-| "Permission denied" | Add execute: `chmod +x file` |
-| "Address in use" | Kill existing: `killall syncflow` |
-| "Network discovery fails" | Check WiFi connected |
-| Build fails | `pkg update && pkg upgrade` |
+| Problem                   | Solution                            |
+| ------------------------- | ----------------------------------- |
+| "Command not found"       | `pkg install build-essential cmake` |
+| "Permission denied"       | Add execute: `chmod +x file`        |
+| "Address in use"          | Kill existing: `killall syncflow`   |
+| "Network discovery fails" | Check WiFi connected                |
+| Build fails               | `pkg update && pkg upgrade`         |
 
 ## Performance Tips
 
@@ -118,12 +118,12 @@ systemctl --user start syncflow
 
 ## Scripts Reference
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/setup-termux.sh` | Install dependencies |
-| `scripts/build-termux.sh` | Build Syncflow |
-| `scripts/run-syncflow.sh` | Run with privilege escalation |
-| `scripts/install-termux.sh` | Complete setup (all-in-one) |
+| Script                      | Purpose                       |
+| --------------------------- | ----------------------------- |
+| `scripts/setup-termux.sh`   | Install dependencies          |
+| `scripts/build-termux.sh`   | Build Syncflow                |
+| `scripts/run-syncflow.sh`   | Run with privilege escalation |
+| `scripts/install-termux.sh` | Complete setup (all-in-one)   |
 
 ## Environment Variables
 
@@ -141,22 +141,26 @@ SYNCFLOW_LOG_LEVEL=DEBUG su -c "~/syncflow/build/syncflow list-devices"
 ## Common Tasks
 
 ### Send a file
+
 ```bash
 su -c "~/syncflow/build/syncflow send /path/to/file 192-168-1-100"
 ```
 
 ### Set up sync folder
+
 ```bash
 su -c "~/syncflow/build/syncflow add-folder /sdcard/Syncflow"
 su -c "~/syncflow/build/syncflow start-sync"
 ```
 
 ### Monitor transfers
+
 ```bash
 su -c "~/syncflow/build/syncflow list-transfers"
 ```
 
 ### View devices
+
 ```bash
 su -c "~/syncflow/build/syncflow list-devices"
 ```

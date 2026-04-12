@@ -9,12 +9,14 @@ Syncflow has been successfully adapted to run on **Android** using **Termux** wi
 ### 1. Platform-Specific Implementation Files ✅
 
 #### `src/platform/android/file_watcher.cpp`
+
 - Implements file monitoring using **inotify** (available in Termux)
 - Detects file changes: Create, Delete, Modify, Move
 - Compatible with Linux's inotify implementation
 - Real-time file system monitoring for sync triggers
 
 #### `src/platform/android/network_config.cpp`
+
 - Network initialization for Android/Termux
 - MAC address detection from `/sys/class/net/` interfaces
 - Network interface enumeration
@@ -23,12 +25,14 @@ Syncflow has been successfully adapted to run on **Android** using **Termux** wi
 ### 2. Build System Updates ✅
 
 #### Modified `CMakeLists.txt`
+
 - Added proper Android platform detection
 - Android/Termux uses standard `-pthread` flag (like Linux)
 - Conditional Android NDK library linking (only if building with Android ABI)
 - Supports both standalone Termux builds and full Android NDK integration
 
 **Key changes:**
+
 ```cmake
 # Android/Termux-specific configuration
 if(SYNCFLOW_ANDROID)
@@ -41,24 +45,28 @@ endif()
 ### 3. Build Automation Scripts ✅
 
 #### `scripts/setup-termux.sh`
+
 - Automated Termux environment setup
 - Installs build tools: CMake, Clang, GCC, Make
 - Optional root access configuration
 - Creates convenience symlinks
 
 #### `scripts/build-termux.sh`
+
 - Complete build script for Termux
 - Configures CMake with Termux-specific flags
 - Handles multi-core compilation
 - Provides clear build status and next steps
 
 #### `scripts/run-syncflow.sh`
+
 - Smart privilege escalation wrapper
 - Auto-detects available escalation method: sudo, su, or none
 - Passes arguments correctly through escalation layers
 - Includes helpful error messages
 
 #### `scripts/install-termux.sh`
+
 - One-command complete setup
 - Combines setup, build, and installation
 - User-friendly progress reporting
@@ -66,6 +74,7 @@ endif()
 ### 4. Comprehensive Documentation ✅
 
 #### `docs/TERMUX_BUILD.md` (Complete Guide)
+
 - **1000+ lines** of detailed documentation
 - Installation prerequisites and setup
 - Step-by-step build instructions
@@ -78,6 +87,7 @@ endif()
 - Advanced NDK integration notes
 
 #### `docs/TERMUX_QUICK_REF.md` (Quick Reference)
+
 - One-command installation
 - Essential commands table
 - Root access methods comparison
@@ -89,6 +99,7 @@ endif()
 - Network troubleshooting
 
 #### `README_TERMUX.md` (Android User Guide)
+
 - User-friendly introduction
 - Quick start (30 seconds)
 - What Syncflow can do
@@ -135,18 +146,19 @@ endif()
 
 ### Termux Compatibility
 
-| Feature | Implementation | Status |
-|---------|----------------|--------|
-| File System Monitoring | inotify | ✅ Full |
-| Networking (TCP/UDP) | POSIX sockets | ✅ Full |
-| Threading | POSIX threads | ✅ Full |
-| File I/O | Standard open/read/write | ✅ Full |
-| Device Discovery | UDP broadcast | ✅ Full |
-| Root Access | su/sudo escalation | ✅ Supported |
+| Feature                | Implementation           | Status       |
+| ---------------------- | ------------------------ | ------------ |
+| File System Monitoring | inotify                  | ✅ Full      |
+| Networking (TCP/UDP)   | POSIX sockets            | ✅ Full      |
+| Threading              | POSIX threads            | ✅ Full      |
+| File I/O               | Standard open/read/write | ✅ Full      |
+| Device Discovery       | UDP broadcast            | ✅ Full      |
+| Root Access            | su/sudo escalation       | ✅ Supported |
 
 ## Features Enabled on Android
 
 ### ✅ Core Functionality
+
 - Device discovery via UDP broadcast
 - File transfer via TCP with chunking
 - Bidirectional folder synchronization
@@ -154,6 +166,7 @@ endif()
 - Resumable transfers
 
 ### ✅ Android-Specific Features
+
 - Real-time file monitoring (inotify)
 - Multiple device synchronization
 - Background sync support
@@ -161,6 +174,7 @@ endif()
 - MAC address detection for device identification
 
 ### ✅ Root-Access Features (with su/sudo)
+
 - Access to `/sdcard/` and all storage
 - System-wide file permissions
 - Persistent background services
@@ -210,6 +224,7 @@ bash scripts/run-syncflow.sh send /file device-id
 ## Testing & Validation
 
 ### Build Verification
+
 ```bash
 # The binary can be tested with:
 ./syncflow --help
@@ -218,6 +233,7 @@ bash scripts/run-syncflow.sh send /file device-id
 ```
 
 ### Runtime Validation (With Root)
+
 ```bash
 su -c "syncflow list-devices"     # Test network access
 su -c "syncflow add-folder /tmp"  # Test file monitoring
@@ -225,40 +241,45 @@ su -c "syncflow show-config"      # Test configuration
 ```
 
 ### File Watcher Validation
+
 - inotify is auto-initialized when watching directories
 - File changes are detected in real-time (Linux/Android compatible)
 - Supports all standard file system events
 
 ## Platform Support Matrix
 
-| Platform | Full Support | Core Support | Stub | Status |
-|----------|-------------|--------------|------|--------|
-| Linux | ✅ | - | - | Production Ready |
-| Windows | ✅ | - | Watcher | Production Ready |
-| macOS | ✅ | - | FSEvents | Production Ready |
-| Android/Termux | ✅ | - | - | **Production Ready** |
+| Platform       | Full Support | Core Support | Stub     | Status               |
+| -------------- | ------------ | ------------ | -------- | -------------------- |
+| Linux          | ✅           | -            | -        | Production Ready     |
+| Windows        | ✅           | -            | Watcher  | Production Ready     |
+| macOS          | ✅           | -            | FSEvents | Production Ready     |
+| Android/Termux | ✅           | -            | -        | **Production Ready** |
 
 ## Key Implementation Decisions
 
 ### 1. inotify-Based File Watching
+
 - ✅ Reuses Linux implementation
 - ✅ Termux has full inotify support
 - ✅ No special Android API needed
 - ✅ Real-time change detection
 
 ### 2. Standard POSIX Sockets
+
 - ✅ Termux provides full POSIX compliance
 - ✅ No Android NDK required
 - ✅ Same code as Linux version
 - ✅ UDP for discovery, TCP for transfers
 
 ### 3. Privilege Escalation
+
 - Supports su, sudo, or no escalation
 - Graceful degradation if not available
 - Configurable via environment
 - Termux:Boot for persistent access
 
 ### 4. Storage Access
+
 - User folders work without root
 - Full storage with root access
 - Automatic path resolution
@@ -266,28 +287,31 @@ su -c "syncflow show-config"      # Test configuration
 
 ## Performance Characteristics
 
-| Operation | Time | Notes |
-|-----------|------|-------|
-| Device discovery | <5s | UDP broadcast on local network |
-| File monitoring start | <100ms | inotify initialization |
-| File transfer (1 MB) | ~1-2s | Depends on network |
-| Folder scan (1000 files) | <2s | Parallel processing |
-| Sync startup | <1s | Efficient initialization |
+| Operation                | Time   | Notes                          |
+| ------------------------ | ------ | ------------------------------ |
+| Device discovery         | <5s    | UDP broadcast on local network |
+| File monitoring start    | <100ms | inotify initialization         |
+| File transfer (1 MB)     | ~1-2s  | Depends on network             |
+| Folder scan (1000 files) | <2s    | Parallel processing            |
+| Sync startup             | <1s    | Efficient initialization       |
 
 ## Deployment Considerations
 
 ### Minimum Requirements
+
 - Android 7.0+ (recommended)
 - Termux from F-Droid
 - 50 MB disk space for build
 - 10 MB for binary
 
 ### Optional Enhancements
+
 - Termux:Boot (for persistent daemon)
 - sudo or su (for root access)
 - termux-services (for background services)
 
 ### Storage Recommendations
+
 - User sync folders: `~/storage/` (no root)
 - System sync: `/sdcard/` or `/storage/emulated/0/` (with root)
 - Large transfers: External microSD card if available
@@ -314,13 +338,13 @@ bash ~/syncflow/scripts/install-termux.sh ~/syncflow
 
 ## Troubleshooting Summary
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Build fails | Missing tools | `pkg install build-essential cmake` |
-| Network discovery fails | WiFi issue | Check network connectivity |
-| Permission denied | Not root | Use `su -c` or `sudo` |
-| File not found | Path issue | Use absolute paths or check permissions |
-| Port in use | Another instance | `killall syncflow` |
+| Issue                   | Cause            | Solution                                |
+| ----------------------- | ---------------- | --------------------------------------- |
+| Build fails             | Missing tools    | `pkg install build-essential cmake`     |
+| Network discovery fails | WiFi issue       | Check network connectivity              |
+| Permission denied       | Not root         | Use `su -c` or `sudo`                   |
+| File not found          | Path issue       | Use absolute paths or check permissions |
+| Port in use             | Another instance | `killall syncflow`                      |
 
 ## Future Enhancements
 
@@ -334,6 +358,7 @@ bash ~/syncflow/scripts/install-termux.sh ~/syncflow
 ## File Summary
 
 ### New/Modified Files
+
 ```
 ✅ src/platform/android/file_watcher.cpp          - NEW
 ✅ src/platform/android/network_config.cpp        - NEW
@@ -348,6 +373,7 @@ bash ~/syncflow/scripts/install-termux.sh ~/syncflow
 ```
 
 ### File Changes Detail
+
 - **CMakeLists.txt**: 20 lines modified for Android detection and linking
 - **Android files**: 150+ lines of Termux-compatible platform code
 - **Scripts**: 300+ lines of automation and setup code
@@ -378,6 +404,7 @@ bash ~/syncflow/scripts/install-termux.sh ~/syncflow
 ✅ **Syncflow is now fully functional on Android Termux with root access**
 
 The implementation:
+
 - Uses proven inotify-based file monitoring (same as Linux)
 - Leverages Termux's POSIX-compliant environment
 - Provides multiple root access methods
