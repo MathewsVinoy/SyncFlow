@@ -2,7 +2,9 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -20,8 +22,10 @@
 
 namespace {
 
-constexpr int PORT = 8080;
+// Use a dedicated high, non-privileged port for discovery traffic.
+constexpr int PORT = 37020;
 constexpr int MAXLINE = 1024;
+constexpr int DISCOVERY_TIMEOUT_MS = 3000;
 constexpr char kDiscoverMessage[] = "DISCOVER_SYNCFLOW";
 constexpr char kReplyPrefix[] = "SYNCFLOW_DEVICE";
 
@@ -91,6 +95,13 @@ std::string ip_to_string(const sockaddr_in& addr) {
         return "0.0.0.0";
     }
     return ip;
+}
+
+bool make_ipv4_addr(sockaddr_in& out, const char* ip, int port) {
+    out = {};
+    out.sin_family = AF_INET;
+    out.sin_port = htons(port);
+    return inet_pton(AF_INET, ip, &out.sin_addr) == 1;
 }
 
 }  // namespace
@@ -185,7 +196,7 @@ int client() {
 
     // Optional: avoid hanging forever while waiting for replies.
 #ifdef _WIN32
-    DWORD timeout_ms = 2000;
+    DWORD timeout_ms = DISCOVERY_TIMEOUT_MS;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms)) < 0) {
         perror("setsockopt(SO_RCVTIMEO) failed");
         close_socket(sockfd);
@@ -193,7 +204,7 @@ int client() {
     }
 #else
     timeval timeout{};
-    timeout.tv_sec = 2;
+    timeout.tv_sec = DISCOVERY_TIMEOUT_MS / 1000;
     timeout.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
         perror("setsockopt(SO_RCVTIMEO) failed");
@@ -202,25 +213,44 @@ int client() {
     }
 #endif
 
+    // Probe both broadcast and localhost so local-dev works reliably.
+    std::vector<sockaddr_in> probe_targets;
+
     sockaddr_in bcast_addr{};
     bcast_addr.sin_family = AF_INET;
     bcast_addr.sin_port = htons(PORT);
     bcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);  // 255.255.255.255
+    probe_targets.push_back(bcast_addr);
 
-    if (sendto(sockfd,
-               kDiscoverMessage,
-               std::strlen(kDiscoverMessage),
-               0,
-               reinterpret_cast<const sockaddr*>(&bcast_addr),
-               sizeof(bcast_addr)) < 0) {
-        perror("broadcast send failed");
-         close_socket(sockfd);
+    sockaddr_in localhost_addr{};
+    if (make_ipv4_addr(localhost_addr, "127.0.0.1", PORT)) {
+        probe_targets.push_back(localhost_addr);
+    }
+
+    bool sent_any = false;
+    for (const auto& target : probe_targets) {
+        const int sent = sendto(sockfd,
+                                kDiscoverMessage,
+                                static_cast<int>(std::strlen(kDiscoverMessage)),
+                                0,
+                                reinterpret_cast<const sockaddr*>(&target),
+                                static_cast<SocketLen>(sizeof(target)));
+        if (sent >= 0) {
+            sent_any = true;
+        }
+    }
+
+    if (!sent_any) {
+        perror("discovery probe send failed");
+        close_socket(sockfd);
         return 1;
     }
 
     std::cout << "Broadcast discovery sent. Waiting for responses...\n";
 
     char buffer[MAXLINE];
+    std::set<std::string> seen_devices;
+    int found_count = 0;
     while (true) {
         sockaddr_in from{};
         SocketLen len = static_cast<SocketLen>(sizeof(from));
@@ -250,7 +280,17 @@ int client() {
         }
 
         buffer[n] = '\0';
-        std::cout << "Found device " << ip_to_string(from) << ": " << buffer << "\n";
+        const std::string sender_ip = ip_to_string(from);
+        if (!seen_devices.insert(sender_ip + "|" + std::string(buffer)).second) {
+            continue;
+        }
+
+        ++found_count;
+        std::cout << "Found device " << sender_ip << ": " << buffer << "\n";
+    }
+
+    if (found_count == 0) {
+        std::cout << "No devices discovered on UDP " << PORT << "\n";
     }
 
     close_socket(sockfd);
