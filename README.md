@@ -7,6 +7,7 @@ Transport model:
 - UDP: device discovery broadcast
 - TCP: device-to-device handshake
 - TCP (chunk-based): reliable file transfer engine
+- UDP (chunk-based + ACK/retransmit): fast LAN file transfer mode
 
 ## Build
 
@@ -31,25 +32,35 @@ Optional status check:
 ./build/syncflow status
 ```
 
-## File Transfer Engine (Chunk-Based)
+## File Transfer Engine (TCP + UDP)
 
 Start receiver on Device B:
 
 ```bash
-./build/syncflow recv-file 37030 ./received
+./build/syncflow recv-file 37030 ./received                 # default TCP
+./build/syncflow_transfer recv --tcp 37030 ./received
+./build/syncflow_transfer recv --udp 37030 ./received
 ```
 
 Send file from Device A:
 
 ```bash
-./build/syncflow send-file <device-ip> 37030 /path/to/file.bin
+./build/syncflow send-file <device-ip> 37030 /path/to/file.bin   # default TCP
+./build/syncflow_transfer send --tcp <device-ip> 37030 /path/to/file.bin
+./build/syncflow_transfer send --udp <device-ip> 37030 /path/to/file.bin
 ```
 
 Notes:
 
-- Chunk size: 256 KiB
-- Per-chunk CRC32 integrity check
-- Per-chunk ACK for transfer progress and reliability
+- TCP mode:
+  - Chunk size: 256 KiB
+  - Per-chunk CRC32 integrity check
+  - Per-chunk ACK for reliability
+- UDP mode:
+  - Chunk size: 1024 bytes
+  - Sliding window transfer
+  - Per-chunk CRC32 + ACK + retransmit timeout
+  - Best for low-latency LAN; default mode is still TCP for stability
 
 ## Production configuration
 
