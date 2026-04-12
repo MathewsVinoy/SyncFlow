@@ -18,6 +18,10 @@ add_executable(syncflow_transfer
     src/transfer/file_transfer.cpp
 )
 
+add_executable(syncflow_sync
+    src/sync/directory_sync.cpp
+)
+
 target_include_directories(syncflow_discovery
     PRIVATE
         include
@@ -33,10 +37,16 @@ target_include_directories(syncflow_transfer
         include
 )
 
+target_include_directories(syncflow_sync
+    PRIVATE
+        include
+)
+
 if(WIN32)
     target_link_libraries(syncflow_discovery PRIVATE ws2_32)
     target_link_libraries(syncflow PRIVATE ws2_32)
     target_link_libraries(syncflow_transfer PRIVATE ws2_32)
+    target_link_libraries(syncflow_sync PRIVATE ws2_32)
 endif()
 
 # Convenience run targets:

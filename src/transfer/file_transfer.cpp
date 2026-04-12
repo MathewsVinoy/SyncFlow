@@ -1,13 +1,17 @@
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -28,8 +32,9 @@ namespace {
 
 constexpr int DEFAULT_TRANSFER_PORT = 37030;
 constexpr std::uint32_t PROTOCOL_MAGIC = 0x53465431U;  // SFT1
-constexpr std::uint32_t PROTOCOL_VERSION = 2U;
-constexpr std::uint32_t TCP_CHUNK_SIZE = 256U * 1024U;
+constexpr std::uint32_t PROTOCOL_VERSION = 3U;
+constexpr std::uint32_t TCP_CHUNK_SIZE = 128U * 1024U;
+constexpr std::uint32_t TCP_PIPELINE_QUEUE_DEPTH = 8U;
 constexpr std::uint32_t UDP_PAYLOAD_SIZE = 1024U;
 constexpr std::uint32_t UDP_WINDOW_SIZE = 32U;
 constexpr int SOCKET_TIMEOUT_MS = 100;
@@ -66,6 +71,14 @@ struct FileHeader {
 struct ChunkHeader {
 	std::uint32_t seq;
 	std::uint32_t size;
+	std::uint32_t crc;
+};
+
+struct TcpChunkPacketHeader {
+	std::uint32_t seq;
+	std::uint32_t orig_size;
+	std::uint32_t wire_size;
+	std::uint32_t flags;
 	std::uint32_t crc;
 };
 
@@ -355,6 +368,99 @@ bool parse_udp_frame(const std::uint8_t* data,
 	return true;
 }
 
+std::uint32_t chunks_for_size(std::uint64_t file_size, std::uint32_t chunk_size) {
+	if (chunk_size == 0) {
+		return 0;
+	}
+	return static_cast<std::uint32_t>((file_size + chunk_size - 1U) / chunk_size);
+}
+
+std::uint32_t chunk_bytes_for_seq(std::uint64_t file_size, std::uint32_t chunk_size, std::uint32_t seq) {
+	const std::uint64_t offset = static_cast<std::uint64_t>(seq) * chunk_size;
+	if (offset >= file_size) {
+		return 0;
+	}
+	return static_cast<std::uint32_t>(std::min<std::uint64_t>(chunk_size, file_size - offset));
+}
+
+bool compute_chunk_crc_list(const std::filesystem::path& path,
+							std::uint64_t file_size,
+							std::uint32_t chunk_size,
+							std::vector<std::uint32_t>& out_crc) {
+	out_crc.clear();
+	const std::uint32_t chunk_count = chunks_for_size(file_size, chunk_size);
+	out_crc.reserve(chunk_count);
+
+	std::ifstream in(path, std::ios::binary);
+	if (!in.is_open()) {
+		return false;
+	}
+
+	std::vector<std::uint8_t> buf(chunk_size);
+	for (std::uint32_t seq = 0; seq < chunk_count; ++seq) {
+		const std::uint32_t need = chunk_bytes_for_seq(file_size, chunk_size, seq);
+		in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(need));
+		if (in.gcount() != static_cast<std::streamsize>(need)) {
+			return false;
+		}
+		out_crc.push_back(crc32(buf.data(), need));
+	}
+	return true;
+}
+
+bool rle_compress(const std::vector<std::uint8_t>& input, std::vector<std::uint8_t>& output) {
+	output.clear();
+	if (input.empty()) {
+		return false;
+	}
+	output.reserve(input.size());
+	size_t i = 0;
+	while (i < input.size()) {
+		const std::uint8_t value = input[i];
+		std::uint8_t run = 1;
+		while (i + run < input.size() && input[i + run] == value && run < 255) {
+			++run;
+		}
+		output.push_back(run);
+		output.push_back(value);
+		i += run;
+	}
+	return output.size() + 16 < input.size();
+}
+
+bool rle_decompress(const std::uint8_t* input,
+					 size_t input_size,
+					 std::uint32_t expected_output_size,
+					 std::vector<std::uint8_t>& output) {
+	output.clear();
+	if (input_size % 2 != 0) {
+		return false;
+	}
+	output.reserve(expected_output_size);
+	for (size_t i = 0; i < input_size; i += 2) {
+		const std::uint8_t run = input[i];
+		const std::uint8_t value = input[i + 1];
+		if (run == 0) {
+			return false;
+		}
+		for (std::uint32_t n = 0; n < run; ++n) {
+			output.push_back(value);
+			if (output.size() > expected_output_size) {
+				return false;
+			}
+		}
+	}
+	return output.size() == expected_output_size;
+}
+
+inline bool bit_is_set(const std::vector<std::uint8_t>& bitmap, std::uint32_t idx) {
+	return (bitmap[idx / 8U] & static_cast<std::uint8_t>(1U << (idx % 8U))) != 0;
+}
+
+inline void bit_set(std::vector<std::uint8_t>& bitmap, std::uint32_t idx) {
+	bitmap[idx / 8U] = static_cast<std::uint8_t>(bitmap[idx / 8U] | static_cast<std::uint8_t>(1U << (idx % 8U)));
+}
+
 bool send_file_tcp(SocketHandle sock, const std::filesystem::path& path) {
 	if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
 		std::cerr << "Invalid file path: " << path << "\n";
@@ -392,49 +498,170 @@ bool send_file_tcp(SocketHandle sock, const std::filesystem::path& path) {
 		return false;
 	}
 
-	std::vector<std::uint8_t> chunk(TCP_CHUNK_SIZE);
-	std::uint64_t sent_bytes = 0;
-	std::uint32_t seq = 0;
-
-	while (sent_bytes < file_size) {
-		const std::uint64_t remaining = file_size - sent_bytes;
-		const std::uint32_t this_size = static_cast<std::uint32_t>(remaining > TCP_CHUNK_SIZE ? TCP_CHUNK_SIZE : remaining);
-
-		in.read(reinterpret_cast<char*>(chunk.data()), this_size);
-		if (in.gcount() != static_cast<std::streamsize>(this_size)) {
-			std::cerr << "Failed to read chunk from file\n";
-			return false;
-		}
-
-		ChunkHeader ch{};
-		ch.seq = htonl(seq);
-		ch.size = htonl(this_size);
-		ch.crc = htonl(crc32(chunk.data(), this_size));
-
-		if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&ch), sizeof(ch)) ||
-			!send_all(sock, chunk.data(), this_size)) {
-			std::cerr << "Failed to send chunk seq=" << seq << "\n";
-			return false;
-		}
-
-		AckPacket ack{};
-		if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&ack), sizeof(ack))) {
-			std::cerr << "Failed to receive ack for seq=" << seq << "\n";
-			return false;
-		}
-
-		const std::uint32_t ack_seq = ntohl(ack.seq);
-		if (ack.status != 1 || ack_seq != seq) {
-			std::cerr << "Chunk ack failed at seq=" << seq << "\n";
-			return false;
-		}
-
-		sent_bytes += this_size;
-		++seq;
-		std::cout << "Sent " << sent_bytes << "/" << file_size << " bytes\r" << std::flush;
+	const std::uint32_t chunk_count = chunks_for_size(file_size, TCP_CHUNK_SIZE);
+	std::vector<std::uint32_t> local_crc;
+	if (!compute_chunk_crc_list(path, file_size, TCP_CHUNK_SIZE, local_crc)) {
+		std::cerr << "Failed computing sender chunk fingerprints\n";
+		return false;
 	}
 
-	std::cout << "\nFile transfer completed successfully.\n";
+	const std::uint32_t chunk_count_be = htonl(chunk_count);
+	if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&chunk_count_be), sizeof(chunk_count_be))) {
+		std::cerr << "Failed to send chunk count\n";
+		return false;
+	}
+
+	for (std::uint32_t c : local_crc) {
+		const std::uint32_t be = htonl(c);
+		if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&be), sizeof(be))) {
+			std::cerr << "Failed to send fingerprint list\n";
+			return false;
+		}
+	}
+
+	std::uint32_t bitmap_size_be = 0;
+	if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&bitmap_size_be), sizeof(bitmap_size_be))) {
+		std::cerr << "Failed to receive delta bitmap size\n";
+		return false;
+	}
+	const std::uint32_t bitmap_size = ntohl(bitmap_size_be);
+	if (bitmap_size != (chunk_count + 7U) / 8U) {
+		std::cerr << "Invalid delta bitmap size\n";
+		return false;
+	}
+
+	std::vector<std::uint8_t> bitmap(bitmap_size, 0);
+	if (bitmap_size > 0 && !recv_all(sock, bitmap.data(), bitmap_size)) {
+		std::cerr << "Failed to receive delta bitmap\n";
+		return false;
+	}
+
+	std::vector<std::uint32_t> needed_seq;
+	needed_seq.reserve(chunk_count);
+	for (std::uint32_t seq = 0; seq < chunk_count; ++seq) {
+		if (bit_is_set(bitmap, seq)) {
+			needed_seq.push_back(seq);
+		}
+	}
+
+	const std::uint32_t needed_count_be = htonl(static_cast<std::uint32_t>(needed_seq.size()));
+	if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&needed_count_be), sizeof(needed_count_be))) {
+		std::cerr << "Failed to send needed chunk count\n";
+		return false;
+	}
+
+	if (needed_seq.empty()) {
+		std::cout << "File already up-to-date. Nothing to transfer.\n";
+		return true;
+	}
+
+	struct PreparedChunk {
+		TcpChunkPacketHeader header{};
+		std::vector<std::uint8_t> payload;
+	};
+
+	std::deque<PreparedChunk> queue;
+	std::mutex queue_mu;
+	std::condition_variable cv_not_empty;
+	std::condition_variable cv_not_full;
+	bool producer_done = false;
+	bool producer_error = false;
+
+	std::thread producer([&]() {
+		std::ifstream fin(path, std::ios::binary);
+		if (!fin.is_open()) {
+			std::lock_guard<std::mutex> lock(queue_mu);
+			producer_error = true;
+			producer_done = true;
+			cv_not_empty.notify_all();
+			return;
+		}
+
+		for (std::uint32_t seq : needed_seq) {
+			const std::uint32_t raw_size = chunk_bytes_for_seq(file_size, TCP_CHUNK_SIZE, seq);
+			if (raw_size == 0) {
+				std::lock_guard<std::mutex> lock(queue_mu);
+				producer_error = true;
+				producer_done = true;
+				cv_not_empty.notify_all();
+				return;
+			}
+
+			std::vector<std::uint8_t> raw;
+			if (!read_file_chunk_at(fin, static_cast<std::uint64_t>(seq) * TCP_CHUNK_SIZE, raw_size, raw)) {
+				std::lock_guard<std::mutex> lock(queue_mu);
+				producer_error = true;
+				producer_done = true;
+				cv_not_empty.notify_all();
+				return;
+			}
+
+			std::vector<std::uint8_t> compressed;
+			bool use_compressed = rle_compress(raw, compressed);
+			PreparedChunk item{};
+			item.header.seq = htonl(seq);
+			item.header.orig_size = htonl(raw_size);
+			item.header.flags = htonl(use_compressed ? 1U : 0U);
+			item.header.crc = htonl(crc32(raw.data(), raw.size()));
+			item.payload = use_compressed ? std::move(compressed) : std::move(raw);
+			item.header.wire_size = htonl(static_cast<std::uint32_t>(item.payload.size()));
+
+			std::unique_lock<std::mutex> lock(queue_mu);
+			cv_not_full.wait(lock, [&]() {
+				return queue.size() < TCP_PIPELINE_QUEUE_DEPTH;
+			});
+			queue.push_back(std::move(item));
+			lock.unlock();
+			cv_not_empty.notify_one();
+		}
+
+		std::lock_guard<std::mutex> lock(queue_mu);
+		producer_done = true;
+		cv_not_empty.notify_all();
+	});
+
+	std::uint64_t raw_sent = 0;
+	std::uint64_t wire_sent = 0;
+	std::uint32_t sent_chunks = 0;
+
+	while (true) {
+		PreparedChunk item;
+		{
+			std::unique_lock<std::mutex> lock(queue_mu);
+			cv_not_empty.wait(lock, [&]() {
+				return !queue.empty() || producer_done;
+			});
+			if (queue.empty()) {
+				break;
+			}
+			item = std::move(queue.front());
+			queue.pop_front();
+			cv_not_full.notify_one();
+		}
+
+		if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&item.header), sizeof(item.header)) ||
+			!send_all(sock, item.payload.data(), item.payload.size())) {
+			producer.join();
+			std::cerr << "Failed sending optimized chunk stream\n";
+			return false;
+		}
+
+		raw_sent += ntohl(item.header.orig_size);
+		wire_sent += ntohl(item.header.wire_size);
+		++sent_chunks;
+		std::cout << "Optimized send chunks " << sent_chunks << "/" << needed_seq.size() << "\r" << std::flush;
+	}
+
+	producer.join();
+	if (producer_error) {
+		std::cerr << "Failed while preparing chunks\n";
+		return false;
+	}
+
+	const double ratio = raw_sent == 0 ? 1.0 : static_cast<double>(wire_sent) / static_cast<double>(raw_sent);
+	std::cout << "\nOptimized TCP transfer completed. raw=" << raw_sent
+			  << " wire=" << wire_sent
+			  << " ratio=" << ratio << "\n";
 	return true;
 }
 
@@ -458,6 +685,10 @@ bool receive_file_tcp(SocketHandle sock, const std::filesystem::path& output_dir
 		std::cerr << "Invalid header values\n";
 		return false;
 	}
+	if (chunk_size != TCP_CHUNK_SIZE) {
+		std::cerr << "Unsupported chunk size\n";
+		return false;
+	}
 
 	std::string file_name(name_len, '\0');
 	if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(file_name.data()), file_name.size())) {
@@ -468,61 +699,147 @@ bool receive_file_tcp(SocketHandle sock, const std::filesystem::path& output_dir
 	std::filesystem::create_directories(output_dir);
 	const auto output_file = output_dir / std::filesystem::path(file_name).filename();
 
-	std::ofstream out(output_file, std::ios::binary | std::ios::trunc);
+	std::uint32_t chunk_count_be = 0;
+	if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&chunk_count_be), sizeof(chunk_count_be))) {
+		std::cerr << "Failed to receive chunk count\n";
+		return false;
+	}
+	const std::uint32_t chunk_count = ntohl(chunk_count_be);
+	if (chunk_count != chunks_for_size(file_size, chunk_size)) {
+		std::cerr << "Invalid chunk count\n";
+		return false;
+	}
+
+	std::vector<std::uint32_t> sender_crc(chunk_count, 0);
+	for (std::uint32_t i = 0; i < chunk_count; ++i) {
+		std::uint32_t be = 0;
+		if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&be), sizeof(be))) {
+			std::cerr << "Failed to receive sender fingerprint list\n";
+			return false;
+		}
+		sender_crc[i] = ntohl(be);
+	}
+
+	std::vector<std::uint32_t> local_crc(chunk_count, 0);
+	if (std::filesystem::exists(output_file) && std::filesystem::is_regular_file(output_file)) {
+		const std::uint64_t existing_size = std::filesystem::file_size(output_file);
+		const std::uint32_t existing_chunks = chunks_for_size(existing_size, chunk_size);
+		std::ifstream existing(output_file, std::ios::binary);
+		if (existing.is_open()) {
+			std::vector<std::uint8_t> buf(chunk_size);
+			for (std::uint32_t seq = 0; seq < std::min<std::uint32_t>(chunk_count, existing_chunks); ++seq) {
+				const std::uint32_t expect = chunk_bytes_for_seq(file_size, chunk_size, seq);
+				existing.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(expect));
+				if (existing.gcount() != static_cast<std::streamsize>(expect)) {
+					break;
+				}
+				local_crc[seq] = crc32(buf.data(), expect);
+			}
+		}
+	}
+
+	const std::uint32_t bitmap_size = (chunk_count + 7U) / 8U;
+	std::vector<std::uint8_t> bitmap(bitmap_size, 0);
+	std::uint32_t needed_count = 0;
+	for (std::uint32_t seq = 0; seq < chunk_count; ++seq) {
+		if (local_crc[seq] != sender_crc[seq]) {
+			bit_set(bitmap, seq);
+			++needed_count;
+		}
+	}
+
+	const std::uint32_t bitmap_size_send_be = htonl(bitmap_size);
+	if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&bitmap_size_send_be), sizeof(bitmap_size_send_be))) {
+		std::cerr << "Failed to send bitmap size\n";
+		return false;
+	}
+	if (bitmap_size > 0 && !send_all(sock, bitmap.data(), bitmap.size())) {
+		std::cerr << "Failed to send bitmap\n";
+		return false;
+	}
+
+	std::uint32_t sender_needed_be = 0;
+	if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&sender_needed_be), sizeof(sender_needed_be))) {
+		std::cerr << "Failed to receive sender needed chunk count\n";
+		return false;
+	}
+	const std::uint32_t sender_needed = ntohl(sender_needed_be);
+	if (sender_needed != needed_count) {
+		std::cerr << "Sender/receiver delta mismatch\n";
+		return false;
+	}
+
+	std::fstream out(output_file, std::ios::binary | std::ios::in | std::ios::out);
+	if (!out.is_open()) {
+		std::ofstream create(output_file, std::ios::binary | std::ios::trunc);
+		create.close();
+		out.open(output_file, std::ios::binary | std::ios::in | std::ios::out);
+	}
 	if (!out.is_open()) {
 		std::cerr << "Failed to open output file: " << output_file << "\n";
 		return false;
 	}
 
-	std::vector<std::uint8_t> chunk(chunk_size);
-	std::uint64_t received_bytes = 0;
-	std::uint32_t expected_seq = 0;
-
-	while (received_bytes < file_size) {
-		ChunkHeader ch{};
-		if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&ch), sizeof(ch))) {
-			std::cerr << "Failed to receive chunk header\n";
+	std::vector<std::uint8_t> wire_buf;
+	std::vector<std::uint8_t> raw_buf;
+	for (std::uint32_t i = 0; i < sender_needed; ++i) {
+		TcpChunkPacketHeader packet{};
+		if (!recv_all(sock, reinterpret_cast<std::uint8_t*>(&packet), sizeof(packet))) {
+			std::cerr << "Failed to receive optimized chunk header\n";
 			return false;
 		}
 
-		const std::uint32_t seq = ntohl(ch.seq);
-		const std::uint32_t size = ntohl(ch.size);
-		const std::uint32_t expected_crc = ntohl(ch.crc);
+		const std::uint32_t seq = ntohl(packet.seq);
+		const std::uint32_t orig_size = ntohl(packet.orig_size);
+		const std::uint32_t wire_size = ntohl(packet.wire_size);
+		const std::uint32_t flags = ntohl(packet.flags);
+		const std::uint32_t expected_crc = ntohl(packet.crc);
 
-		if (seq != expected_seq || size == 0 || size > chunk_size || received_bytes + size > file_size) {
-			std::cerr << "Invalid chunk header values\n";
+		if (seq >= chunk_count || orig_size != chunk_bytes_for_seq(file_size, chunk_size, seq) || wire_size == 0) {
+			std::cerr << "Invalid optimized chunk metadata\n";
 			return false;
 		}
 
-		if (!recv_all(sock, chunk.data(), size)) {
-			std::cerr << "Failed to receive chunk data\n";
+		wire_buf.resize(wire_size);
+		if (!recv_all(sock, wire_buf.data(), wire_buf.size())) {
+			std::cerr << "Failed to receive optimized chunk payload\n";
 			return false;
 		}
 
-		AckPacket ack{};
-		ack.seq = htonl(seq);
-		ack.status = (crc32(chunk.data(), size) == expected_crc) ? 1 : 0;
+		if ((flags & 1U) != 0U) {
+			if (!rle_decompress(wire_buf.data(), wire_buf.size(), orig_size, raw_buf)) {
+				std::cerr << "Failed to decompress chunk seq=" << seq << "\n";
+				return false;
+			}
+		} else {
+			raw_buf.assign(wire_buf.begin(), wire_buf.end());
+			if (raw_buf.size() != orig_size) {
+				std::cerr << "Invalid raw chunk size\n";
+				return false;
+			}
+		}
 
-		if (ack.status == 0) {
-			send_all(sock, reinterpret_cast<const std::uint8_t*>(&ack), sizeof(ack));
-			std::cerr << "CRC mismatch on seq=" << seq << "\n";
+		if (crc32(raw_buf.data(), raw_buf.size()) != expected_crc) {
+			std::cerr << "CRC mismatch on optimized chunk seq=" << seq << "\n";
 			return false;
 		}
 
-		out.write(reinterpret_cast<const char*>(chunk.data()), size);
+		out.seekp(static_cast<std::streamoff>(static_cast<std::uint64_t>(seq) * chunk_size), std::ios::beg);
+		out.write(reinterpret_cast<const char*>(raw_buf.data()), static_cast<std::streamsize>(raw_buf.size()));
 		if (!out.good()) {
-			std::cerr << "Failed writing output file\n";
+			std::cerr << "Failed writing optimized chunk\n";
 			return false;
 		}
 
-		if (!send_all(sock, reinterpret_cast<const std::uint8_t*>(&ack), sizeof(ack))) {
-			std::cerr << "Failed to send ack\n";
-			return false;
-		}
+		std::cout << "Optimized recv chunks " << (i + 1) << "/" << sender_needed << "\r" << std::flush;
+	}
 
-		received_bytes += size;
-		++expected_seq;
-		std::cout << "Received " << received_bytes << "/" << file_size << " bytes\r" << std::flush;
+	out.flush();
+	std::error_code ec;
+	std::filesystem::resize_file(output_file, file_size, ec);
+	if (ec) {
+		std::cerr << "Failed to resize output file\n";
+		return false;
 	}
 
 	std::cout << "\nSaved file to: " << output_file << "\n";

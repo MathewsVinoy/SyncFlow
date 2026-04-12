@@ -40,6 +40,16 @@ std::filesystem::path transfer_binary_path(const char* argv0) {
 #endif
 }
 
+std::filesystem::path sync_binary_path(const char* argv0) {
+    std::filesystem::path cli_path = std::filesystem::absolute(argv0);
+    const auto dir = cli_path.parent_path();
+#ifdef _WIN32
+    return dir / "syncflow_sync.exe";
+#else
+    return dir / "syncflow_sync";
+#endif
+}
+
 bool write_pid_file(unsigned long long pid) {
     std::ofstream out(pid_file_path(), std::ios::trunc);
     if (!out.is_open()) {
@@ -199,9 +209,12 @@ int list_devices(const std::filesystem::path& server_bin) {
 }
 
 void print_usage() {
-    std::cout << "Usage: syncflow <start|stop|list-devices|status|recv-file|send-file>\n"
+    std::cout << "Usage: syncflow <start|stop|list-devices|status|recv-file|send-file|sync-dir|sync-recv|sync-auto>\n"
               << "  recv-file [port] [output_dir]\n"
-              << "  send-file <ip> [port] <file_path>\n";
+              << "  send-file <ip> [port] <file_path>\n"
+              << "  sync-dir [--tcp|--udp] <ip> [port] <source_dir> [interval_ms]\n"
+              << "  sync-recv [--tcp|--udp] [port] [output_dir]\n"
+              << "  sync-auto [--tcp|--udp] <peer_ip> [port] <sync_dir> [interval_ms]\n";
 }
 
 }  // namespace
@@ -215,6 +228,7 @@ int main(int argc, char* argv[]) {
     const std::string command = argv[1];
     const auto server_bin = discovery_binary_path(argv[0]);
     const auto transfer_bin = transfer_binary_path(argv[0]);
+    const auto sync_bin = sync_binary_path(argv[0]);
 
     if (command == "start") {
         if (!std::filesystem::exists(server_bin)) {
@@ -293,6 +307,58 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "syncflow discovery is not running\n";
         return 1;
+    }
+
+    if (command == "sync-dir") {
+        if (!std::filesystem::exists(sync_bin)) {
+            std::cerr << "Sync binary not found: " << sync_bin << "\n";
+            std::cerr << "Build target syncflow_sync first.\n";
+            return 1;
+        }
+
+        if (argc < 4) {
+            print_usage();
+            return 1;
+        }
+
+        std::string cmd = "\"" + sync_bin.string() + "\" send";
+        for (int i = 2; i < argc; ++i) {
+            cmd += " \"" + std::string(argv[i]) + "\"";
+        }
+        return std::system(cmd.c_str());
+    }
+
+    if (command == "sync-recv") {
+        if (!std::filesystem::exists(sync_bin)) {
+            std::cerr << "Sync binary not found: " << sync_bin << "\n";
+            std::cerr << "Build target syncflow_sync first.\n";
+            return 1;
+        }
+
+        std::string cmd = "\"" + sync_bin.string() + "\" recv";
+        for (int i = 2; i < argc; ++i) {
+            cmd += " \"" + std::string(argv[i]) + "\"";
+        }
+        return std::system(cmd.c_str());
+    }
+
+    if (command == "sync-auto") {
+        if (!std::filesystem::exists(sync_bin)) {
+            std::cerr << "Sync binary not found: " << sync_bin << "\n";
+            std::cerr << "Build target syncflow_sync first.\n";
+            return 1;
+        }
+
+        if (argc < 4) {
+            print_usage();
+            return 1;
+        }
+
+        std::string cmd = "\"" + sync_bin.string() + "\" auto";
+        for (int i = 2; i < argc; ++i) {
+            cmd += " \"" + std::string(argv[i]) + "\"";
+        }
+        return std::system(cmd.c_str());
     }
 
     print_usage();
