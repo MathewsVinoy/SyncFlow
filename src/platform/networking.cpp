@@ -284,11 +284,17 @@ public:
             // macOS implementation
             mac = "00:00:00:00:00:00"; // Placeholder
         #else
-            // Linux implementation
-            std::ifstream file("/sys/class/net/eth0/address");
-            if (file.is_open()) {
-                std::getline(file, mac);
-                return true;
+            // Linux implementation - try multiple common interfaces
+            const char* interfaces[] = {"eth0", "wlan0", "enp0s3", "enp3s0", "ens33", "en0"};
+            for (const auto& iface : interfaces) {
+                std::string path = std::string("/sys/class/net/") + iface + "/address";
+                std::ifstream file(path);
+                if (file.is_open()) {
+                    std::getline(file, mac);
+                    if (!mac.empty()) {
+                        return true;
+                    }
+                }
             }
         #endif
         return false;

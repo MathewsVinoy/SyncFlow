@@ -7,6 +7,8 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <thread>
+#include <chrono>
 
 using namespace syncflow;
 
@@ -42,6 +44,29 @@ int main(int argc, char* argv[]) {
     
     try {
         if (command == "list-devices") {
+            // Initialize and start discovery engine
+            discovery::DiscoveryEngine engine;
+            bool started = engine.start(
+                [](const DeviceInfo& info) {
+                    LOG_INFO("main", "Device discovered: " + info.name);
+                },
+                [](const DeviceID& id) {
+                    LOG_INFO("main", "Device lost: " + id);
+                }
+            );
+            
+            if (!started) {
+                std::cerr << "Failed to start discovery engine\n";
+                return 1;
+            }
+            
+            // Wait for device discovery
+            std::cout << "Scanning for devices...\n";
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+            
+            // Stop the engine before listing
+            engine.stop();
+            
             // List discovered devices
             auto& device_mgr = discovery::DeviceManager::instance();
             auto devices = device_mgr.get_all_devices();
@@ -62,6 +87,23 @@ int main(int argc, char* argv[]) {
             }
             
         } else if (command == "status") {
+            // Initialize and start discovery engine
+            discovery::DiscoveryEngine engine;
+            engine.start(
+                [](const DeviceInfo& info) {
+                    LOG_INFO("main", "Device discovered: " + info.name);
+                },
+                [](const DeviceID& id) {
+                    LOG_INFO("main", "Device lost: " + id);
+                }
+            );
+            
+            // Wait for device discovery
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            
+            // Stop the engine before showing status
+            engine.stop();
+            
             // Show status
             auto& device_mgr = discovery::DeviceManager::instance();
             std::cout << "Connected devices: " << device_mgr.device_count() << "\n";
