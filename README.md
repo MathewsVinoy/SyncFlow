@@ -2,6 +2,22 @@
 
 Cross-platform UDP device discovery for a mini AirDrop / Nearby Share style project.
 
+UI option:
+
+- A cross-platform browser-based web UI is available via `syncflow_ui`
+- A native desktop UI is available via `syncflow_desktop` (FLTK)
+
+Supported platforms:
+
+- Linux
+- Windows
+- Android (Termux or NDK build)
+- macOS
+
+Mobile app:
+
+- Android app project is available in [android-app](android-app)
+
 Transport model:
 
 - UDP: device discovery broadcast
@@ -16,6 +32,32 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
+### Android
+
+For Android, build with the Android NDK toolchain or run the binaries in Termux.
+
+Notes:
+
+- Use a writable storage path such as the app sandbox or shared storage.
+- Network discovery may require Wi-Fi and multicast permissions in an Android app.
+- `syncflow_ui` provides a browser-based interface that works well on Android without a native UI toolkit.
+
+### Android app (native)
+
+An Android Studio project is included at [android-app](android-app).
+
+What it does:
+
+- Opens the Syncflow web UI in an in-app `WebView`
+- Provides quick buttons for discovery start/stop/list
+- Lets you point to local (`127.0.0.1:8080`) or remote device UI endpoint
+
+How to run:
+
+1. Open [android-app](android-app) in Android Studio.
+2. Build and run on device/emulator.
+3. Make sure `syncflow_ui` is reachable from the phone (same device or LAN IP).
+
 ## CLI commands
 
 Use the `syncflow` executable:
@@ -25,6 +67,41 @@ Use the `syncflow` executable:
 ./build/syncflow list-devices
 ./build/syncflow stop
 ```
+
+## Cross-platform UI
+
+Launch the local web UI:
+
+```bash
+./build/syncflow_ui
+```
+
+Then open the shown address in a browser on Linux, Windows, macOS, or Android.
+
+The UI can:
+
+- start/stop discovery
+- list nearby devices
+- start/stop a file receiver
+- send a file
+- start/stop auto-sync
+
+## Desktop app (FLTK)
+
+Install FLTK development package, then build:
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+```
+
+Run desktop app:
+
+```bash
+./build/syncflow_desktop
+```
+
+If FLTK is not installed, the desktop target is skipped automatically.
 
 Directory sync commands:
 
@@ -141,4 +218,6 @@ cmake --build build --target run_cli_start
 cmake --build build --target run_cli_list_devices
 cmake --build build --target run_cli_stop
 cmake --build build --target run_transfer_recv
+cmake --build build --target run_ui
+cmake --build build --target run_desktop_ui
 ```

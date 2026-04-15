@@ -68,3 +68,16 @@ coverage/
 *.log
 *.bak
 *.backup
+
+# Android / Gradle
+**/.gradle/
+**/local.properties
+**/captures/
+**/app/build/
+**/build/
+*.apk
+*.aab
+
+# Android Studio
+*.iml
+**/.idea/

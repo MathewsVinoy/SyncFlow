@@ -9,6 +9,7 @@
 #include <string>
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -45,6 +46,8 @@ struct PlatformInfo {
 inline PlatformInfo get_platform_info() {
 #ifdef _WIN32
     return {"windows", "1"};
+#elif defined(__ANDROID__)
+    return {"android", "1"};
 #elif __APPLE__
     return {"macos", "1"};
 #else
