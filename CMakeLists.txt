@@ -30,6 +30,10 @@ add_executable(syncflow_ui
     src/ui/syncflow_ui.cpp
 )
 
+add_executable(syncflow_agent
+    src/agent/syncflow_agent.cpp
+)
+
 find_package(FLTK QUIET)
 if(FLTK_FOUND)
     add_executable(syncflow_desktop
@@ -70,12 +74,18 @@ target_include_directories(syncflow_ui
         include
 )
 
+target_include_directories(syncflow_agent
+    PRIVATE
+        include
+)
+
 if(WIN32)
     target_link_libraries(syncflow_discovery PRIVATE ws2_32)
     target_link_libraries(syncflow PRIVATE ws2_32)
     target_link_libraries(syncflow_transfer PRIVATE ws2_32)
     target_link_libraries(syncflow_sync PRIVATE ws2_32)
     target_link_libraries(syncflow_ui PRIVATE ws2_32)
+    target_link_libraries(syncflow_agent PRIVATE ws2_32)
     if(FLTK_FOUND)
         target_link_libraries(syncflow_desktop PRIVATE ws2_32)
     endif()
@@ -129,6 +139,13 @@ add_custom_target(run_transfer_recv
 add_custom_target(run_ui
     COMMAND syncflow_ui
     DEPENDS syncflow_ui syncflow_discovery syncflow_transfer syncflow_sync
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    USES_TERMINAL
+)
+
+add_custom_target(run_agent
+    COMMAND syncflow_agent start
+    DEPENDS syncflow_agent syncflow_discovery syncflow_ui
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     USES_TERMINAL
 )

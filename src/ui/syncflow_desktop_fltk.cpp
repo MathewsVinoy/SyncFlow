@@ -2,6 +2,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Group.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Multiline_Output.H>
 #include <FL/Fl_Window.H>
@@ -343,6 +344,8 @@ void on_status(Fl_Widget*, void* data) {
 } // namespace
 
 int main(int argc, char* argv[]) {
+    Fl::scheme("gtk+");
+
     AppState st;
 
     const auto bin_dir = std::filesystem::absolute(argv[0]).parent_path();
@@ -356,56 +359,85 @@ int main(int argc, char* argv[]) {
     st.sync_bin = bin_dir / "syncflow_sync";
 #endif
 
-    Fl_Window* win = new Fl_Window(920, 640, "Syncflow Desktop UI (FLTK)");
+    Fl_Window* win = new Fl_Window(980, 690, "Syncflow Desktop");
+    win->color(fl_rgb_color(245, 247, 250));
 
-    auto* title = new Fl_Box(20, 16, 880, 28, "Syncflow Desktop UI");
+    auto* title = new Fl_Box(20, 12, 940, 34, "Syncflow - Quick Share Style Desktop App");
     title->labelsize(22);
+    title->labelfont(FL_BOLD);
+    title->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
-    auto* b1 = new Fl_Button(20, 60, 140, 34, "Discovery Start");
-    auto* b2 = new Fl_Button(170, 60, 140, 34, "Discovery Stop");
-    auto* b3 = new Fl_Button(320, 60, 140, 34, "List Devices");
-    auto* b4 = new Fl_Button(470, 60, 140, 34, "Status");
+    auto* nearby_card = new Fl_Group(20, 56, 300, 220, "Nearby Devices");
+    nearby_card->box(FL_ENGRAVED_BOX);
+    nearby_card->labelsize(14);
+    nearby_card->labelfont(FL_BOLD);
+    nearby_card->align(FL_ALIGN_TOP_LEFT);
 
-    auto* transferLbl = new Fl_Box(20, 112, 260, 24, "File Transfer");
-    transferLbl->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    auto* b1 = new Fl_Button(36, 88, 124, 34, "Start Sharing");
+    auto* b2 = new Fl_Button(174, 88, 124, 34, "Stop Sharing");
+    auto* b3 = new Fl_Button(36, 132, 262, 34, "Scan Nearby Devices");
+    auto* b4 = new Fl_Button(36, 176, 262, 34, "Refresh Status");
+    nearby_card->end();
 
-    st.transfer_transport = new Fl_Choice(20, 140, 110, 30, "Transport");
+    auto* send_card = new Fl_Group(336, 56, 624, 220, "Send File");
+    send_card->box(FL_ENGRAVED_BOX);
+    send_card->labelsize(14);
+    send_card->labelfont(FL_BOLD);
+    send_card->align(FL_ALIGN_TOP_LEFT);
+
+    st.transfer_transport = new Fl_Choice(354, 90, 130, 30, "Transport");
     st.transfer_transport->add("TCP");
     st.transfer_transport->add("UDP");
     st.transfer_transport->value(0);
 
-    st.transfer_ip = new Fl_Input(140, 140, 180, 30, "Peer IP");
-    st.transfer_port = new Fl_Input(330, 140, 90, 30, "Port");
+    st.transfer_ip = new Fl_Input(500, 90, 180, 30, "Device IP");
+    st.transfer_port = new Fl_Input(696, 90, 90, 30, "Port");
     st.transfer_port->value("37030");
-    st.transfer_file = new Fl_Input(430, 140, 300, 30, "File");
-    auto* sendBtn = new Fl_Button(740, 140, 160, 30, "Send File");
+    st.transfer_file = new Fl_Input(354, 138, 432, 30, "File Path");
+    auto* sendBtn = new Fl_Button(800, 138, 140, 30, "Send Now");
+    sendBtn->color(fl_rgb_color(66, 133, 244));
+    sendBtn->labelcolor(FL_WHITE);
 
-    st.recv_port = new Fl_Input(140, 180, 90, 30, "Recv Port");
+    st.recv_port = new Fl_Input(354, 186, 90, 30, "Recv Port");
     st.recv_port->value("37030");
-    st.recv_dir = new Fl_Input(240, 180, 280, 30, "Output Dir");
+    st.recv_dir = new Fl_Input(458, 186, 220, 30, "Save Folder");
     st.recv_dir->value("received");
-    auto* recvStartBtn = new Fl_Button(530, 180, 180, 30, "Start Receiver");
-    auto* recvStopBtn = new Fl_Button(720, 180, 180, 30, "Stop Receiver");
+    auto* recvStartBtn = new Fl_Button(694, 186, 120, 30, "Receiver On");
+    auto* recvStopBtn = new Fl_Button(820, 186, 120, 30, "Receiver Off");
+    send_card->end();
 
-    auto* syncLbl = new Fl_Box(20, 232, 260, 24, "Auto Sync");
-    syncLbl->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    auto* sync_card = new Fl_Group(20, 288, 940, 130, "Auto Sync");
+    sync_card->box(FL_ENGRAVED_BOX);
+    sync_card->labelsize(14);
+    sync_card->labelfont(FL_BOLD);
+    sync_card->align(FL_ALIGN_TOP_LEFT);
 
-    st.sync_transport = new Fl_Choice(20, 260, 110, 30, "Transport");
+    st.sync_transport = new Fl_Choice(38, 330, 120, 30, "Transport");
     st.sync_transport->add("TCP");
     st.sync_transport->add("UDP");
     st.sync_transport->value(0);
 
-    st.sync_peer = new Fl_Input(140, 260, 180, 30, "Peer IP");
-    st.sync_port = new Fl_Input(330, 260, 90, 30, "Port");
+    st.sync_peer = new Fl_Input(174, 330, 170, 30, "Peer IP");
+    st.sync_port = new Fl_Input(358, 330, 90, 30, "Port");
     st.sync_port->value("37030");
-    st.sync_dir = new Fl_Input(430, 260, 220, 30, "Sync Dir");
+    st.sync_dir = new Fl_Input(462, 330, 220, 30, "Folder");
     st.sync_dir->value("project_dir");
-    st.sync_interval = new Fl_Input(660, 260, 80, 30, "Interval");
+    st.sync_interval = new Fl_Input(696, 330, 90, 30, "Interval");
     st.sync_interval->value("2000");
-    auto* syncStartBtn = new Fl_Button(750, 260, 150, 30, "Start Auto Sync");
-    auto* syncStopBtn = new Fl_Button(750, 300, 150, 30, "Stop Auto Sync");
+    auto* syncStartBtn = new Fl_Button(802, 312, 138, 30, "Sync On");
+    auto* syncStopBtn = new Fl_Button(802, 348, 138, 30, "Sync Off");
+    syncStartBtn->color(fl_rgb_color(52, 168, 83));
+    syncStartBtn->labelcolor(FL_WHITE);
+    sync_card->end();
 
-    st.log_output = new Fl_Multiline_Output(20, 350, 880, 270, "Logs");
+    auto* activity_card = new Fl_Group(20, 430, 940, 240, "Activity");
+    activity_card->box(FL_ENGRAVED_BOX);
+    activity_card->labelsize(14);
+    activity_card->labelfont(FL_BOLD);
+    activity_card->align(FL_ALIGN_TOP_LEFT);
+    st.log_output = new Fl_Multiline_Output(38, 458, 904, 194);
+    st.log_output->box(FL_DOWN_BOX);
+    activity_card->end();
 
     b1->callback(on_discovery_start, &st);
     b2->callback(on_discovery_stop, &st);
@@ -418,10 +450,10 @@ int main(int argc, char* argv[]) {
     syncStopBtn->callback(on_sync_stop, &st);
 
     win->end();
-    win->resizable(st.log_output);
+    win->resizable(activity_card);
     win->show(argc, argv);
 
-    append_log(&st, "FLTK UI ready.");
+    append_log(&st, "Desktop app ready (quick-share style UI).");
     append_log(&st, "Make sure binaries exist in same build folder.");
 
     return Fl::run();

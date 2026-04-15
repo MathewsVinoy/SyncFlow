@@ -5,7 +5,8 @@ Cross-platform UDP device discovery for a mini AirDrop / Nearby Share style proj
 UI option:
 
 - A cross-platform browser-based web UI is available via `syncflow_ui`
-- A native desktop UI is available via `syncflow_desktop` (FLTK)
+- A native desktop UI is available via `syncflow_desktop` (FLTK, Quick Share style)
+- An always-on desktop background agent is available via `syncflow_agent`
 
 Supported platforms:
 
@@ -24,6 +25,30 @@ Transport model:
 - TCP: device-to-device handshake
 - TCP (chunk-based): reliable file transfer engine
 - UDP (chunk-based + ACK/retransmit): fast LAN file transfer mode
+
+## Quick start
+
+Build all native binaries:
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+```
+
+Start discovery and list nearby devices:
+
+```bash
+./build/syncflow start
+./build/syncflow list-devices
+```
+
+Start the web UI:
+
+```bash
+./build/syncflow_ui
+```
+
+Open the printed local URL in a browser.
 
 ## Build
 
@@ -48,15 +73,28 @@ An Android Studio project is included at [android-app](android-app).
 
 What it does:
 
-- Opens the Syncflow web UI in an in-app `WebView`
-- Provides quick buttons for discovery start/stop/list
-- Lets you point to local (`127.0.0.1:8080`) or remote device UI endpoint
+- Uses a fully native Android UI with Quick Share style sections (no embedded web view)
+- Provides native controls for discovery, transfer, sync, and background service
+- Calls Syncflow API endpoints directly and shows logs in-app
+- Supports persistent background mode and boot auto-start
+
+Important:
+
+- Android app is now native UI, but still communicates with Syncflow service endpoints.
+- Run Syncflow backend endpoint on the same device or another device in the same LAN.
 
 How to run:
 
 1. Open [android-app](android-app) in Android Studio.
 2. Build and run on device/emulator.
 3. Make sure `syncflow_ui` is reachable from the phone (same device or LAN IP).
+4. Tap **Background On** to keep service active.
+
+Background behavior:
+
+- Android app runs a foreground background service.
+- Service auto-starts on device boot and app update.
+- Endpoint is persisted, so app works independently after configuration.
 
 ## CLI commands
 
@@ -86,6 +124,39 @@ The UI can:
 - send a file
 - start/stop auto-sync
 
+## Desktop background mode (independent)
+
+Run Syncflow services in background:
+
+```bash
+./build/syncflow_agent start
+./build/syncflow_agent status
+```
+
+Run watchdog monitor mode:
+
+```bash
+./build/syncflow_agent monitor
+```
+
+Install desktop autostart (runs after login, no manual commands needed):
+
+```bash
+./build/syncflow_agent install-autostart
+```
+
+Remove autostart:
+
+```bash
+./build/syncflow_agent uninstall-autostart
+```
+
+Stop background services:
+
+```bash
+./build/syncflow_agent stop
+```
+
 ## Desktop app (FLTK)
 
 Install FLTK development package, then build:
@@ -102,6 +173,13 @@ Run desktop app:
 ```
 
 If FLTK is not installed, the desktop target is skipped automatically.
+
+Typical FLTK install packages:
+
+- Ubuntu/Debian: `libfltk1.3-dev`
+- Fedora: `fltk-devel`
+- Arch: `fltk`
+- macOS (Homebrew): `fltk`
 
 Directory sync commands:
 
@@ -220,4 +298,5 @@ cmake --build build --target run_cli_stop
 cmake --build build --target run_transfer_recv
 cmake --build build --target run_ui
 cmake --build build --target run_desktop_ui
+cmake --build build --target run_agent
 ```
