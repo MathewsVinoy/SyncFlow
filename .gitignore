@@ -68,3 +68,5 @@ coverage/
 *.log
 *.bak
 *.backup
+.gradle/
+local.properties
