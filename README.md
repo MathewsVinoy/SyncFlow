@@ -277,6 +277,17 @@ You can configure runtime settings with environment variables:
 - `SYNCFLOW_DISCOVERY_TIMEOUT_MS` (default: `3000`)
 - `SYNCFLOW_TCP_TIMEOUT_MS` (default: `2000`)
 - `SYNCFLOW_AUTH_TOKEN` (default: `syncflow-dev-token`)
+- `SYNCFLOW_UI_PORT` (default: `8080`)
+- `SYNCFLOW_UI_BIND_ADDR` (default: `127.0.0.1`)
+- `SYNCFLOW_UI_TOKEN` (default: empty; set in production)
+
+Production hardening recommendations:
+
+- Keep UI bind address on localhost unless you need remote control
+- If using non-local bind (`0.0.0.0` or LAN IP), set `SYNCFLOW_UI_TOKEN`
+- Use firewall rules to limit access to trusted devices
+- Run background mode via `syncflow_agent install-autostart`
+- Use strong shared secret for `SYNCFLOW_AUTH_TOKEN`
 
 Example:
 
@@ -284,6 +295,8 @@ Example:
 export SYNCFLOW_AUTH_TOKEN="replace-with-strong-shared-secret"
 export SYNCFLOW_DISCOVERY_UDP_PORT=47020
 export SYNCFLOW_HANDSHAKE_TCP_PORT=47021
+export SYNCFLOW_UI_BIND_ADDR=127.0.0.1
+export SYNCFLOW_UI_TOKEN="replace-with-strong-ui-token"
 ./build/syncflow start
 ./build/syncflow list-devices
 ./build/syncflow stop

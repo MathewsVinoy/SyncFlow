@@ -32,9 +32,16 @@
 namespace {
 
 constexpr int DEFAULT_UI_PORT = 8080;
+constexpr const char* DEFAULT_UI_BIND_ADDR = "127.0.0.1";
 constexpr int DEFAULT_DISCOVERY_UDP_PORT = 37020;
 constexpr int DEFAULT_TRANSFER_PORT = 37030;
 constexpr int DEFAULT_SYNC_INTERVAL_MS = 2000;
+
+struct UiRuntimeConfig {
+    int ui_port = DEFAULT_UI_PORT;
+    std::string bind_addr = DEFAULT_UI_BIND_ADDR;
+    std::string api_token;
+};
 
 using SocketHandle =
 #ifdef _WIN32
@@ -44,6 +51,14 @@ constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
     int;
 constexpr SocketHandle kInvalidSocket = -1;
 #endif
+
+void close_socket(SocketHandle sock) {
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+}
 
 struct ServiceSpec {
     std::filesystem::path pid_file;
@@ -290,6 +305,71 @@ bool parse_port(const std::string& raw, int& out) {
     }
 }
 
+std::string get_env_or_default(const char* key, const std::string& fallback) {
+    const char* v = std::getenv(key);
+    if (!v || v[0] == '\0') {
+        return fallback;
+    }
+    return std::string(v);
+}
+
+bool parse_int_range(const std::string& raw, int min_v, int max_v, int& out) {
+    try {
+        const int v = std::stoi(raw);
+        if (v < min_v || v > max_v) {
+            return false;
+        }
+        out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool normalize_transport(const std::string& raw, std::string& out) {
+    std::string t;
+    t.reserve(raw.size());
+    for (char c : raw) {
+        t.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (t.empty() || t == "tcp") {
+        out = "--tcp";
+        return true;
+    }
+    if (t == "udp") {
+        out = "--udp";
+        return true;
+    }
+    return false;
+}
+
+bool is_local_bind_address(const std::string& ip) {
+    return ip == "127.0.0.1" || ip == "localhost";
+}
+
+UiRuntimeConfig load_ui_config(int argc, char* argv[]) {
+    UiRuntimeConfig cfg;
+    cfg.bind_addr = get_env_or_default("SYNCFLOW_UI_BIND_ADDR", DEFAULT_UI_BIND_ADDR);
+    cfg.api_token = get_env_or_default("SYNCFLOW_UI_TOKEN", "");
+
+    const std::string env_port = get_env_or_default("SYNCFLOW_UI_PORT", std::to_string(DEFAULT_UI_PORT));
+    int parsed_port = DEFAULT_UI_PORT;
+    if (parse_int_range(env_port, 1024, 65535, parsed_port)) {
+        cfg.ui_port = parsed_port;
+    }
+
+    if (argc >= 2) {
+        int cli_port = DEFAULT_UI_PORT;
+        if (!parse_int_range(argv[1], 1024, 65535, cli_port)) {
+            std::cerr << "invalid port\n";
+            std::exit(1);
+        }
+        cfg.ui_port = cli_port;
+    }
+
+    return cfg;
+}
+
 std::string capture_command(const std::vector<std::string>& args) {
     if (args.empty()) {
         return {};
@@ -328,7 +408,7 @@ std::string capture_command(const std::vector<std::string>& args) {
     return output;
 }
 
-std::string root_html(int port) {
+std::string root_html(int port, bool token_required) {
     std::ostringstream html;
     html << R"HTML(<!doctype html>
 <html lang="en">
@@ -414,7 +494,13 @@ std::string root_html(int port) {
     </div>
   </div>
 
-  <div class="card" style="margin-top:16px;">
+    <div class="card" style="margin-top:16px;">
+        <h2>Security</h2>
+        <div class="row"><label>API Token (optional unless required)</label><input id="apiToken" placeholder="token"></div>
+        <p class="small">Token required: )HTML" << (token_required ? "yes" : "no") << R"HTML(</p>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
     <h2>Output</h2>
     <pre id="out">Ready.</pre>
   </div>
@@ -423,7 +509,14 @@ std::string root_html(int port) {
 const out = document.getElementById('out');
 function enc(v){ return encodeURIComponent(v || ''); }
 function val(id){ return document.getElementById(id).value; }
+function tokenSuffix(){
+    const t = val('apiToken');
+    if(!t) return '';
+    return (t ? ( (arguments[0] ? '&' : '?') + 'token=' + enc(t) ) : '');
+}
 async function call(url){
+    const hasQ = url.indexOf('?') >= 0;
+    url = url + tokenSuffix(hasQ);
   out.textContent = 'Working... ' + url;
   try {
     const r = await fetch(url, { method: 'GET' });
@@ -439,11 +532,25 @@ async function call(url){
     return html.str();
 }
 
+std::string status_reason(int status) {
+    switch (status) {
+    case 200: return "OK";
+    case 400: return "Bad Request";
+    case 401: return "Unauthorized";
+    case 403: return "Forbidden";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    default: return "Error";
+    }
+}
+
 std::string http_response(const std::string& body, const std::string& content_type = "text/plain; charset=utf-8", int status = 200) {
     std::ostringstream ss;
-    ss << "HTTP/1.1 " << status << " OK\r\n"
+    ss << "HTTP/1.1 " << status << " " << status_reason(status) << "\r\n"
        << "Content-Type: " << content_type << "\r\n"
        << "Content-Length: " << body.size() << "\r\n"
+       << "X-Content-Type-Options: nosniff\r\n"
+       << "Cache-Control: no-store\r\n"
        << "Connection: close\r\n\r\n"
        << body;
     return ss.str();
@@ -485,7 +592,16 @@ std::string run_transfer_action(const std::string& action,
         const std::string port = (it_port != q.end() ? it_port->second : std::to_string(DEFAULT_TRANSFER_PORT));
         const std::string dir = (it_dir != q.end() ? it_dir->second : "received");
 
-        ServiceSpec spec{pid_file_path("transfer_recv"), transfer_bin, {"recv", transport == "udp" ? "--udp" : "--tcp", port, dir}};
+        std::string mode;
+        int p = DEFAULT_TRANSFER_PORT;
+        if (!normalize_transport(transport, mode)) {
+            return "invalid transport\n";
+        }
+        if (!parse_int_range(port, 1024, 65535, p)) {
+            return "invalid port\n";
+        }
+
+        ServiceSpec spec{pid_file_path("transfer_recv"), transfer_bin, {"recv", mode, std::to_string(p), dir}};
         return spawn_detached(spec) ? "transfer receiver started\n" : "failed to start transfer receiver\n";
     }
     if (action == "stop") {
@@ -502,7 +618,18 @@ std::string run_transfer_action(const std::string& action,
         if (ip.empty() || path.empty()) {
             return "missing ip or path\n";
         }
-        return capture_command({transfer_bin.string(), "send", transport == "udp" ? "--udp" : "--tcp", ip, port, path});
+        std::string mode;
+        int p = DEFAULT_TRANSFER_PORT;
+        if (!normalize_transport(transport, mode)) {
+            return "invalid transport\n";
+        }
+        if (!parse_int_range(port, 1024, 65535, p)) {
+            return "invalid port\n";
+        }
+        if (!std::filesystem::exists(path)) {
+            return "file path not found\n";
+        }
+        return capture_command({transfer_bin.string(), "send", mode, ip, std::to_string(p), path});
     }
     return "unknown transfer action\n";
 }
@@ -520,7 +647,20 @@ std::string run_sync_action(const std::string& action,
             return "missing peer IP\n";
         }
 
-        ServiceSpec spec{pid_file_path("sync"), sync_bin, {"auto", transport == "udp" ? "--udp" : "--tcp", peer, port, dir, interval}};
+        std::string mode;
+        int p = DEFAULT_TRANSFER_PORT;
+        int interval_ms = DEFAULT_SYNC_INTERVAL_MS;
+        if (!normalize_transport(transport, mode)) {
+            return "invalid transport\n";
+        }
+        if (!parse_int_range(port, 1024, 65535, p)) {
+            return "invalid port\n";
+        }
+        if (!parse_int_range(interval, 200, 60000, interval_ms)) {
+            return "invalid interval\n";
+        }
+
+        ServiceSpec spec{pid_file_path("sync"), sync_bin, {"auto", mode, peer, std::to_string(p), dir, std::to_string(interval_ms)}};
         return spawn_detached(spec) ? "auto-sync started\n" : "failed to start auto-sync\n";
     }
     if (action == "stop") {
@@ -533,6 +673,7 @@ std::string run_sync_action(const std::string& action,
 }
 
 std::string handle_request(const std::string& request_line,
+                           const UiRuntimeConfig& cfg,
                            const std::filesystem::path& discovery_bin,
                            const std::filesystem::path& transfer_bin,
                            const std::filesystem::path& sync_bin) {
@@ -547,8 +688,23 @@ std::string handle_request(const std::string& request_line,
     const std::string path = target.substr(0, qpos);
     const std::map<std::string, std::string> q = (qpos == std::string::npos) ? std::map<std::string, std::string>{} : parse_query(target.substr(qpos + 1));
 
+    if (method != "GET") {
+        return http_response("method not allowed\n", "text/plain; charset=utf-8", 405);
+    }
+
+    if (path == "/healthz") {
+        return http_response("ok\n", "text/plain; charset=utf-8", 200);
+    }
+
+    if (path.rfind("/api/", 0) == 0 && !cfg.api_token.empty()) {
+        auto it = q.find("token");
+        if (it == q.end() || it->second != cfg.api_token) {
+            return http_response("unauthorized\n", "text/plain; charset=utf-8", 401);
+        }
+    }
+
     if (path == "/") {
-        return http_response(root_html(DEFAULT_UI_PORT), "text/html; charset=utf-8", 200);
+        return http_response(root_html(cfg.ui_port, !cfg.api_token.empty()), "text/html; charset=utf-8", 200);
     }
     if (path == "/api/discovery/start") return http_response(run_discovery_action("start", discovery_bin));
     if (path == "/api/discovery/stop") return http_response(run_discovery_action("stop", discovery_bin));
@@ -603,7 +759,10 @@ std::string read_http_request(SocketHandle sock) {
     return request;
 }
 
-void run_server(int port, const std::filesystem::path& discovery_bin, const std::filesystem::path& transfer_bin, const std::filesystem::path& sync_bin) {
+void run_server(const UiRuntimeConfig& cfg,
+                const std::filesystem::path& discovery_bin,
+                const std::filesystem::path& transfer_bin,
+                const std::filesystem::path& sync_bin) {
     SocketHandle server =
 #ifdef _WIN32
         socket(AF_INET, SOCK_STREAM, 0);
@@ -624,19 +783,34 @@ void run_server(int port, const std::filesystem::path& discovery_bin, const std:
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(static_cast<std::uint16_t>(port));
+    if (cfg.bind_addr == "0.0.0.0") {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    } else {
+        if (inet_pton(AF_INET, cfg.bind_addr.c_str(), &addr.sin_addr) != 1) {
+            std::cerr << "invalid SYNCFLOW_UI_BIND_ADDR: " << cfg.bind_addr << "\n";
+            return;
+        }
+    }
+    addr.sin_port = htons(static_cast<std::uint16_t>(cfg.ui_port));
     if (bind(server, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "failed to bind UI port " << port << "\n";
+        std::cerr << "failed to bind UI " << cfg.bind_addr << ":" << cfg.ui_port << "\n";
+        close_socket(server);
         return;
     }
 
     if (listen(server, 16) < 0) {
         std::cerr << "failed to listen on UI port\n";
+        close_socket(server);
         return;
     }
 
-    std::cout << "Syncflow UI running on http://127.0.0.1:" << port << "\n";
+    std::cout << "Syncflow UI running on http://" << cfg.bind_addr << ":" << cfg.ui_port << "\n";
+    if (cfg.api_token.empty()) {
+        std::cout << "Warning: API token not set (set SYNCFLOW_UI_TOKEN for production)\n";
+    }
+    if (!is_local_bind_address(cfg.bind_addr) && cfg.api_token.empty()) {
+        std::cout << "Warning: non-local bind without token is insecure\n";
+    }
     while (true) {
         sockaddr_in client{};
 #ifdef _WIN32
@@ -651,7 +825,7 @@ void run_server(int port, const std::filesystem::path& discovery_bin, const std:
 
         const std::string request = read_http_request(conn);
         const std::string first_line = request.substr(0, request.find("\r\n"));
-        const std::string response = handle_request(first_line, discovery_bin, transfer_bin, sync_bin);
+        const std::string response = handle_request(first_line, cfg, discovery_bin, transfer_bin, sync_bin);
         send_all(conn, response.c_str(), response.size());
 
 #ifdef _WIN32
@@ -660,20 +834,14 @@ void run_server(int port, const std::filesystem::path& discovery_bin, const std:
         close(conn);
 #endif
     }
+
+    close_socket(server);
 }
 
 } // namespace
 
 int main(int argc, char* argv[]) {
-    int port = DEFAULT_UI_PORT;
-    if (argc >= 2) {
-        try {
-            port = std::stoi(argv[1]);
-        } catch (...) {
-            std::cerr << "invalid port\n";
-            return 1;
-        }
-    }
+    const UiRuntimeConfig cfg = load_ui_config(argc, argv);
 
 #ifdef _WIN32
     WSADATA wsa_data{};
@@ -692,7 +860,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    run_server(port, discovery_bin, transfer_bin, sync_bin);
+    run_server(cfg, discovery_bin, transfer_bin, sync_bin);
 
 #ifdef _WIN32
     WSACleanup();
