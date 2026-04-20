@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,8 @@
 #pragma comment(lib, "Ws2_32.lib")
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -202,6 +205,68 @@ bool make_ipv4_addr(sockaddr_in& out, const char* ip, int port) {
     out.sin_family = AF_INET;
     out.sin_port = htons(port);
     return inet_pton(AF_INET, ip, &out.sin_addr) == 1;
+}
+
+void add_probe_target(std::vector<sockaddr_in>& targets,
+                      std::set<uint32_t>& seen_ipv4,
+                      uint32_t ipv4_addr,
+                      int port) {
+    if (!seen_ipv4.insert(ipv4_addr).second) {
+        return;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = ipv4_addr;
+    targets.push_back(addr);
+}
+
+std::vector<sockaddr_in> build_probe_targets(int discovery_port) {
+    std::vector<sockaddr_in> targets;
+    std::set<uint32_t> seen_ipv4;
+
+    // Limited broadcast (works in many LANs).
+    add_probe_target(targets, seen_ipv4, htonl(INADDR_BROADCAST), discovery_port);
+
+    // Localhost for same-host development.
+    sockaddr_in localhost_addr{};
+    if (make_ipv4_addr(localhost_addr, "127.0.0.1", discovery_port)) {
+        add_probe_target(targets, seen_ipv4, localhost_addr.sin_addr.s_addr, discovery_port);
+    }
+
+#ifndef _WIN32
+    // Interface-directed broadcasts increase reliability on segmented LANs.
+    ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == 0) {
+        for (ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+            if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) {
+                continue;
+            }
+            if ((ifa->ifa_flags & IFF_UP) == 0 ||
+                (ifa->ifa_flags & IFF_LOOPBACK) != 0 ||
+                (ifa->ifa_flags & IFF_BROADCAST) == 0 ||
+                !ifa->ifa_broadaddr) {
+                continue;
+            }
+
+            const auto* baddr = reinterpret_cast<const sockaddr_in*>(ifa->ifa_broadaddr);
+            add_probe_target(targets, seen_ipv4, baddr->sin_addr.s_addr, discovery_port);
+        }
+        freeifaddrs(ifaddr);
+    }
+#endif
+
+    return targets;
+}
+
+bool is_recv_timeout_error() {
+#ifdef _WIN32
+    const int socket_error = WSAGetLastError();
+    return socket_error == WSAETIMEDOUT || socket_error == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
 }
 
 void tcp_handshake_server_loop() {
@@ -443,52 +508,51 @@ int client() {
         return 1;
     }
 
-    // Optional: avoid hanging forever while waiting for replies.
-    if (!set_recv_timeout(sockfd, cfg.discovery_timeout_ms)) {
+    // Use a short receive timeout so we can keep probing throughout the discovery window.
+    constexpr int kReceivePollMs = 250;
+    if (!set_recv_timeout(sockfd, kReceivePollMs)) {
         perror("setsockopt(SO_RCVTIMEO) failed");
         close_socket(sockfd);
         return 1;
     }
 
-    // Probe both broadcast and localhost so local-dev works reliably.
-    std::vector<sockaddr_in> probe_targets;
-
-    sockaddr_in bcast_addr{};
-    bcast_addr.sin_family = AF_INET;
-    bcast_addr.sin_port = htons(cfg.discovery_udp_port);
-    bcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);  // 255.255.255.255
-    probe_targets.push_back(bcast_addr);
-
-    sockaddr_in localhost_addr{};
-    if (make_ipv4_addr(localhost_addr, "127.0.0.1", cfg.discovery_udp_port)) {
-        probe_targets.push_back(localhost_addr);
-    }
-
-    bool sent_any = false;
-    for (const auto& target : probe_targets) {
-        const int sent = sendto(sockfd,
-                                kDiscoverMessage,
-                                static_cast<int>(std::strlen(kDiscoverMessage)),
-                                0,
-                                reinterpret_cast<const sockaddr*>(&target),
-                                static_cast<SocketLen>(sizeof(target)));
-        if (sent >= 0) {
-            sent_any = true;
-        }
-    }
-
-    if (!sent_any) {
-        perror("discovery probe send failed");
+    const std::vector<sockaddr_in> probe_targets = build_probe_targets(cfg.discovery_udp_port);
+    if (probe_targets.empty()) {
+        std::cerr << "No discovery probe targets available\n";
         close_socket(sockfd);
         return 1;
     }
 
-    std::cout << "Broadcast discovery sent. Waiting for responses...\n";
+    std::cout << "Discovery probe started (targets=" << probe_targets.size()
+              << ", timeout_ms=" << cfg.discovery_timeout_ms << ")\n";
 
     char buffer[MAXLINE];
     std::set<std::string> seen_devices;
     int found_count = 0;
-    while (true) {
+    bool sent_any = false;
+
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = start + std::chrono::milliseconds(cfg.discovery_timeout_ms);
+    auto next_probe_at = start;
+    constexpr auto kProbeInterval = std::chrono::milliseconds(700);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_probe_at) {
+            for (const auto& target : probe_targets) {
+                const int sent = sendto(sockfd,
+                                        kDiscoverMessage,
+                                        static_cast<int>(std::strlen(kDiscoverMessage)),
+                                        0,
+                                        reinterpret_cast<const sockaddr*>(&target),
+                                        static_cast<SocketLen>(sizeof(target)));
+                if (sent >= 0) {
+                    sent_any = true;
+                }
+            }
+            next_probe_at = now + kProbeInterval;
+        }
+
         sockaddr_in from{};
         SocketLen len = static_cast<SocketLen>(sizeof(from));
 
@@ -501,16 +565,9 @@ int client() {
             &len);
 
         if (n < 0) {
-#ifdef _WIN32
-            const int socket_error = WSAGetLastError();
-            if (socket_error == WSAETIMEDOUT) {
-                break;  // timeout: discovery window ended
+            if (is_recv_timeout_error()) {
+                continue;
             }
-#else
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break;  // timeout: discovery window ended
-            }
-#endif
             perror("recvfrom failed");
             close_socket(sockfd);
             return 1;
@@ -526,6 +583,12 @@ int client() {
         ++found_count;
         std::cout << "Found device " << sender_ip << ": " << buffer
                   << " | tcp-handshake=" << (handshake_ok ? "ok" : "failed") << "\n";
+    }
+
+    if (!sent_any) {
+        perror("discovery probe send failed");
+        close_socket(sockfd);
+        return 1;
     }
 
     if (found_count == 0) {
