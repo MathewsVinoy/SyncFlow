@@ -1,75 +1,83 @@
+# C++ Build Artifacts
 *.d
-
 *.slo
 *.lo
 *.o
 *.obj
-
 *.gch
 *.pch
-
 *.so
 *.dylib
 *.dll
-
 *.mod
 *.smod
-
 *.lai
 *.la
 *.a
 *.lib
-
 *.exe
 *.out
 *.app
 
+# CMake Build System
 CMakeLists.txt.user
 CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
+CMakeFiles/
+CMakeScripts/
+Testing/
 Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
-_deps
-
+_deps/
 CMakeUserPresets.json
 
-# IDE and editor files
+# Build Directories
+build/
+Build/
+cmake-build-debug/
+cmake-build-release/
+out/
+dist/
+*.egg-info/
+
+# IDE and Editor Files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 *.user
+*.sublime-project
+*.sublime-workspace
 .DS_Store
 Thumbs.db
 
-# Build directories
-*-prefix/
-checkmate/
-build/
-Build/
-cmake-build-debug/
-cmake-build-release/
-out/
-doc/
-
-# Test outputs
+# Test and Coverage
 Testing/
 *.gcov
 coverage/
+.coverage
+htmlcov/
+*.coverage
 
-# Temporary files
+# Generated Files
+src/sync_engine/messages.pb.cc
+src/sync_engine/messages.pb.h
+include/syncflow/version.hpp
+*.pb.cc
+*.pb.h
+
+# Temporary Files
 *.tmp
 *.log
 *.bak
 *.backup
+*.swp
+.#*
 
-# Android / Gradle
+# Android/Gradle Build
 **/.gradle/
 **/local.properties
 **/captures/
@@ -77,7 +85,87 @@ coverage/
 **/build/
 *.apk
 *.aab
+*.aar
 
 # Android Studio
 *.iml
 **/.idea/
+.gradle/
+gradle/wrapper/*.jar
+
+# Desktop UI (Qt)
+**/CMakeLists.txt.user
+**/CMakeLists.txt.user.*
+**/ui_*.h
+moc_*.cpp
+qrc_*.cpp
+*_automoc.cpp
+*_autouic.h
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+ENV/
+env/
+
+# Documentation Build
+doc/build/
+docs/_build/
+site/
+
+# Node.js (if used)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# VS Code Settings (local)
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+
+# Debugging
+*.dSYM/
+*.su
+*.gch
+
+# Third-party builds (keep headers, ignore build artifacts)
+third_party/**/build/
+third_party/**/CMakeFiles/
+third_party/**/*.a
+third_party/**/*.so
+
+# Local configuration
+.env
+.env.local
+local.properties
