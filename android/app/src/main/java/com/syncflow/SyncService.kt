@@ -107,7 +107,16 @@ class SyncService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
-        notificationManager.notify(NOTIFICATION_ID, notification)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (android.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationManager.notify(NOTIFICATION_ID, notification)
+            }
+        } else {
+            notificationManager.notify(NOTIFICATION_ID, notification)
+        }
     }
 
     // Native JNI methods

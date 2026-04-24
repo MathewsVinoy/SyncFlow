@@ -170,3 +170,4 @@ third_party/**/*.so
 .env.local
 local.properties
 docs/
+checkmate/
