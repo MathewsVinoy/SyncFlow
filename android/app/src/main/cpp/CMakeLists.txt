@@ -15,6 +15,14 @@ target_link_libraries(syncflow_jni
     PRIVATE log
 )
 
+# 16 KB page-size compatibility (required on newer Android devices)
+# Ensures PT_LOAD segments in libsyncflow_jni.so are 16 KB aligned.
+target_link_options(syncflow_jni
+    PRIVATE
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,common-page-size=16384
+)
+
 # Include directories
 target_include_directories(syncflow_jni
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

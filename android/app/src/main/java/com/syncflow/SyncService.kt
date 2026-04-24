@@ -8,6 +8,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import android.util.Log
 
@@ -108,7 +109,7 @@ class SyncService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            if (android.content.ContextCompat.checkSelfPermission(
+            if (ContextCompat.checkSelfPermission(
                 this,
                 android.Manifest.permission.POST_NOTIFICATIONS
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {

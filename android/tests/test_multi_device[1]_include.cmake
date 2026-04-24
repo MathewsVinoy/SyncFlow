@@ -1,0 +1,5 @@
+if(EXISTS "/mnt/myworld/dev/open_source_projects/syncflow/android/tests/test_multi_device[1]_tests.cmake")
+  include("/mnt/myworld/dev/open_source_projects/syncflow/android/tests/test_multi_device[1]_tests.cmake")
+else()
+  add_test(test_multi_device_NOT_BUILT test_multi_device_NOT_BUILT)
+endif()

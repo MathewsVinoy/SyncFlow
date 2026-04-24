@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.syncflow"
+    namespace = "com.syncflow"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.syncflow"
+        applicationId = "com.syncflow"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
