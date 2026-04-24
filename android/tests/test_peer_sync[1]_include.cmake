@@ -1,5 +1,0 @@
-if(EXISTS "/mnt/myworld/dev/open_source_projects/syncflow/android/tests/test_peer_sync[1]_tests.cmake")
-  include("/mnt/myworld/dev/open_source_projects/syncflow/android/tests/test_peer_sync[1]_tests.cmake")
-else()
-  add_test(test_peer_sync_NOT_BUILT test_peer_sync_NOT_BUILT)
-endif()
