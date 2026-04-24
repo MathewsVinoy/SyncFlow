@@ -76,6 +76,7 @@ include/syncflow/version.hpp
 *.backup
 *.swp
 .#*
+log/
 
 # Android/Gradle Build
 **/.gradle/

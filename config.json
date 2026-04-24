@@ -1,0 +1,6 @@
+{
+    "app_name": "SyncFlow",
+    "log_level": "info",
+    "device_name": "test",
+    "port": 8080
+}
