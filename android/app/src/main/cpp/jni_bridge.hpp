@@ -1,26 +1,18 @@
 #pragma once
 
 #include <jni.h>
-#include <memory>
 #include <string>
 
 namespace syncflow {
 
-class SyncEngine;
-
 /**
  * @brief JNI Bridge: C++ ↔ Java/Kotlin interface for SyncFlow
- *
- * Manages lifecycle of SyncEngine and provides JNI method implementations
- * for Android UI to control sync operations.
+ * Stub implementation for Android UI integration
  */
 class SyncFlowJNIBridge {
  public:
   /**
    * @brief Initialize JNI bridge (called from JNI_OnLoad)
-   * @param env JNI environment pointer
-   * @param vm Java VM pointer
-   * @return true if initialization successful
    */
   static bool initialize(JNIEnv* env, JavaVM* vm);
 
@@ -31,13 +23,11 @@ class SyncFlowJNIBridge {
 
   /**
    * @brief Get singleton instance
-   * @return Reference to bridge instance
    */
   static SyncFlowJNIBridge& instance();
 
   /**
    * @brief Start sync engine
-   * @return Error message if failed, empty string on success
    */
   std::string start_sync();
 
@@ -48,14 +38,11 @@ class SyncFlowJNIBridge {
 
   /**
    * @brief Add folder to sync
-   * @param folder_path Absolute path to folder
-   * @return Error message if failed, empty on success
    */
   std::string add_sync_folder(const std::string& folder_path);
 
   /**
    * @brief Get engine status
-   * @return Status string (IDLE, SYNCING, ERROR, etc.)
    */
   std::string get_status() const;
 
@@ -73,8 +60,8 @@ class SyncFlowJNIBridge {
   SyncFlowJNIBridge() = default;
   ~SyncFlowJNIBridge() = default;
 
-  std::unique_ptr<SyncEngine> engine_;
   JavaVM* java_vm_ = nullptr;
+  std::string status_ = "IDLE";
 };
 
 }  // namespace syncflow

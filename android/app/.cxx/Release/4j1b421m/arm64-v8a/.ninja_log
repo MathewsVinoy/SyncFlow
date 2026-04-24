@@ -1,0 +1,25 @@
+# ninja log v5
+1	1485	1776963655049981674	CMakeFiles/syncflow_jni.dir/jni_bridge.cpp.o	14c47718db577943
+1485	1887	1776963655455014511	/mnt/myworld/dev/open_source_projects/syncflow/android/app/build/intermediates/cxx/Release/4j1b421m/obj/arm64-v8a/libsyncflow_jni.so	2a779f6a782993cf
+0	90	0	clean	f99be00a04225d28
+0	3	0	clean	f99be00a04225d28
+0	4	0	clean	f99be00a04225d28
+0	2	0	clean	f99be00a04225d28
+0	160	1776964451548114849	CMakeFiles/syncflow_jni.dir/jni_bridge.cpp.o	14c47718db577943
+162	287	1776964451674192542	/mnt/myworld/dev/open_source_projects/syncflow/android/app/build/intermediates/cxx/Release/4j1b421m/obj/arm64-v8a/libsyncflow_jni.so	2a779f6a782993cf
+0	3	0	clean	f99be00a04225d28
+0	4	0	clean	f99be00a04225d28
+0	4	0	clean	f99be00a04225d28
+0	3	0	clean	f99be00a04225d28
+0	4	0	clean	f99be00a04225d28
+0	5	0	clean	f99be00a04225d28
+0	5	0	clean	f99be00a04225d28
+0	3	0	clean	f99be00a04225d28
+0	1913	1776965673162268275	CMakeFiles/syncflow_jni.dir/jni_bridge.cpp.o	14c47718db577943
+1936	2124	1776965673499297553	/mnt/myworld/dev/open_source_projects/syncflow/android/app/build/intermediates/cxx/Release/4j1b421m/obj/arm64-v8a/libsyncflow_jni.so	2a779f6a782993cf
+29	855	1776965748646695203	CMakeFiles/syncflow_jni.dir/jni_bridge.cpp.o	14c47718db577943
+856	982	1776965748798707966	/mnt/myworld/dev/open_source_projects/syncflow/android/app/build/intermediates/cxx/Release/4j1b421m/obj/arm64-v8a/libsyncflow_jni.so	2a779f6a782993cf
+0	57	0	clean	f99be00a04225d28
+0	7	0	clean	f99be00a04225d28
+7	2002	1777003584968469990	CMakeFiles/syncflow_jni.dir/jni_bridge.cpp.o	14c47718db577943
+2002	2205	1777003585190108142	/mnt/myworld/dev/open_source_projects/syncflow/android/app/build/intermediates/cxx/Release/4j1b421m/obj/arm64-v8a/libsyncflow_jni.so	2a779f6a782993cf
