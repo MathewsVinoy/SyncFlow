@@ -8,7 +8,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef _MSC_VER
 #pragma comment(lib, "Ws2_32.lib")
+#endif
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -22,9 +24,11 @@ constexpr const char* kPrefix = "SYNCFLOW";
 
 #ifdef _WIN32
 using SocketHandle = SOCKET;
+using SocketLen = int;
 constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #else
 using SocketHandle = int;
+using SocketLen = socklen_t;
 constexpr SocketHandle kInvalidSocket = -1;
 #endif
 
@@ -69,7 +73,7 @@ bool DeviceDiscovery::sender() const {
 	int enableBroadcast = 1;
 	if (setsockopt(socketFd, SOL_SOCKET, SO_BROADCAST,
 	               reinterpret_cast<const char*>(&enableBroadcast),
-	               static_cast<socklen_t>(sizeof(enableBroadcast))) < 0) {
+	               static_cast<SocketLen>(sizeof(enableBroadcast))) < 0) {
 		closeSocket(socketFd);
 		shutdownSockets();
 		return false;
@@ -86,7 +90,7 @@ bool DeviceDiscovery::sender() const {
 	                        static_cast<int>(payload.size()),
 	                        0,
 	                        reinterpret_cast<const sockaddr*>(&target),
-	                        static_cast<socklen_t>(sizeof(target)));
+	                        static_cast<SocketLen>(sizeof(target)));
 
 	closeSocket(socketFd);
 	shutdownSockets();
@@ -107,7 +111,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	int reuse = 1;
 	if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
 	               reinterpret_cast<const char*>(&reuse),
-	               static_cast<socklen_t>(sizeof(reuse))) < 0) {
+	               static_cast<SocketLen>(sizeof(reuse))) < 0) {
 		closeSocket(socketFd);
 		shutdownSockets();
 		return std::nullopt;
@@ -126,7 +130,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	local.sin_port = htons(discoveryPort_);
 	local.sin_addr.s_addr = htonl(INADDR_ANY);
 
-	if (bind(socketFd, reinterpret_cast<const sockaddr*>(&local), static_cast<socklen_t>(sizeof(local))) < 0) {
+	if (bind(socketFd, reinterpret_cast<const sockaddr*>(&local), static_cast<SocketLen>(sizeof(local))) < 0) {
 		closeSocket(socketFd);
 		shutdownSockets();
 		return std::nullopt;
@@ -134,7 +138,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 
 	std::array<char, 1024> buffer{};
 	sockaddr_in senderAddr{};
-	socklen_t senderLen = static_cast<socklen_t>(sizeof(senderAddr));
+	SocketLen senderLen = static_cast<SocketLen>(sizeof(senderAddr));
 	const int received = recvfrom(socketFd,
 	                              buffer.data(),
 	                              static_cast<int>(buffer.size() - 1),
@@ -152,9 +156,13 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	const std::string request(buffer.data());
 	const std::string expectedProbe = std::string("255.255.255.255:") + std::to_string(discoveryPort_);
 	if (request != expectedProbe) {
+		char ipBuffer[INET_ADDRSTRLEN] = {0};
+		const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
+		const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
+
 		closeSocket(socketFd);
 		shutdownSockets();
-		return std::nullopt;
+		return parseMessage(request, senderIp);
 	}
 
 	const std::string response = std::string(kPrefix) + "|" + deviceName_ + "|" + std::to_string(servicePort_);

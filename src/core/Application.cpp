@@ -3,7 +3,19 @@
 #include "core/Logger.h"
 #include "networking/DeviceDiscovery.h"
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <iostream>
 #include <thread>
+
+namespace {
+std::atomic<bool> g_keepRunning{true};
+
+void handleStopSignal(int) {
+	g_keepRunning.store(false);
+}
+}  // namespace
 
 bool Application::init() {
 	if (!config_.load()) {
@@ -30,27 +42,38 @@ int Application::run() {
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 
+	g_keepRunning.store(true);
+	std::signal(SIGINT, handleStopSignal);
+	std::signal(SIGTERM, handleStopSignal);
+
+	Logger::info("Discovery loop started. Press Ctrl+C to stop.");
+
 	std::thread senderThread([&discovery]() {
-		if (!discovery.sender()) {
-			Logger::warn("Broadcast sender failed");
-			return;
+		while (g_keepRunning.load()) {
+			if (!discovery.sender()) {
+				Logger::warn("Thread 1: Broadcast sender failed");
+			}
+			std::this_thread::sleep_for(std::chrono::seconds(2));
 		}
-		Logger::info("Thread 1: Broadcast sender sent discovery probe");
 	});
 
 	std::thread listenerThread([&discovery]() {
-		auto peer = discovery.receiver(5000);
-		if (!peer.has_value()) {
-			Logger::warn("Thread 2: Listener timed out or failed");
-			return;
-		}
+		while (g_keepRunning.load()) {
+			auto peer = discovery.receiver(1000);
+			if (!peer.has_value()) {
+				continue;
+			}
 
-		Logger::info("Thread 2: Listener received from " + peer->ip + " as " + peer->deviceName +
-		             " on port " + std::to_string(peer->port));
+			std::cout << "Connected device: " << peer->deviceName << " (" << peer->ip << ':' << peer->port << ")"
+			          << std::endl;
+			Logger::info("Thread 2: Listener received from " + peer->ip + " as " + peer->deviceName +
+			             " on port " + std::to_string(peer->port));
+		}
 	});
 
 	senderThread.join();
 	listenerThread.join();
+	Logger::info("Discovery loop stopped");
 	return 0;
 }
 

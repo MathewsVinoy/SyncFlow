@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT SYNCFLOW_IPO_SUPPORTED OUTPUT SYNCFLOW_IPO_ERROR)
+find_package(Threads REQUIRED)
 
 # Third-party dependencies
 set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
@@ -46,10 +47,10 @@ add_library(syncflow_release_opts INTERFACE)
 
 if(MSVC)
 	target_compile_options(syncflow_warnings INTERFACE /W4 /WX)
+	target_compile_options(syncflow_release_opts INTERFACE $<$<CONFIG:Release>:/O2>)
 else()
 	target_compile_options(syncflow_warnings INTERFACE -Wall -Wextra -Werror)
 	target_compile_options(syncflow_release_opts INTERFACE $<$<CONFIG:Release>:-O3>)
-	target_link_options(syncflow_release_opts INTERFACE $<$<CONFIG:Release>:-O3>)
 endif()
 
 function(syncflow_add_module target_name)
@@ -79,6 +80,13 @@ function(syncflow_add_module target_name)
 				PRIVATE
 					spdlog::spdlog
 					nlohmann_json::nlohmann_json
+			)
+		endif()
+
+		if(target_name STREQUAL "networking" AND WIN32)
+			target_link_libraries(${target_name}
+				PRIVATE
+					ws2_32
 			)
 		endif()
 
@@ -126,6 +134,7 @@ target_link_libraries(app
 		sync_engine
 		crypto
 		security
+		Threads::Threads
 		syncflow_warnings
 		syncflow_release_opts
 )
