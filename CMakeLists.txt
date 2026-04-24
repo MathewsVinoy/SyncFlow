@@ -31,6 +31,16 @@ set(SPDLOG_FMT_EXTERNAL_HO OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fmt EXCLUDE_FROM_ALL)
 add_subdirectory(third_party/spdlog EXCLUDE_FROM_ALL)
 
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+	include(FetchContent)
+	FetchContent_Declare(
+		nlohmann_json
+		URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+	)
+	FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
 add_library(syncflow_warnings INTERFACE)
 add_library(syncflow_release_opts INTERFACE)
 
@@ -68,6 +78,7 @@ function(syncflow_add_module target_name)
 			target_link_libraries(${target_name}
 				PRIVATE
 					spdlog::spdlog
+					nlohmann_json::nlohmann_json
 			)
 		endif()
 

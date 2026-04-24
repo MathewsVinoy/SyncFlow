@@ -1,27 +1,13 @@
 #include "core/ConfigManager.h"
 
-#include <cctype>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
+#include <limits>
 
-namespace {
-void skipWhitespace(const std::string& text, std::size_t& pos) {
-	while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
-		++pos;
-	}
-}
+#include <nlohmann/json.hpp>
 
-bool consume(const std::string& text, std::size_t& pos, char expected) {
-	skipWhitespace(text, pos);
-	if (pos >= text.size() || text[pos] != expected) {
-		return false;
-	}
-	++pos;
-	return true;
-}
-}  // namespace
+using json = nlohmann::json;
 
 bool ConfigManager::load(const std::string& filePath) {
 	std::filesystem::path resolvedPath(filePath);
@@ -49,17 +35,33 @@ bool ConfigManager::load(const std::string& filePath) {
 		return false;
 	}
 
-	std::ostringstream buffer;
-	buffer << input.rdbuf();
+	try {
+		json parsed = json::parse(input);
+		if (!parsed.is_object()) {
+			data_.clear();
+			return false;
+		}
 
-	std::unordered_map<std::string, Value> parsed;
-	if (!parseJsonObject(buffer.str(), parsed)) {
+		std::unordered_map<std::string, Value> next;
+		for (auto it = parsed.begin(); it != parsed.end(); ++it) {
+			if (it.value().is_string()) {
+				next[it.key()] = it.value().get<std::string>();
+			} else if (it.value().is_number_integer()) {
+				next[it.key()] = it.value().get<std::int64_t>();
+			} else if (it.value().is_number_unsigned()) {
+				const auto v = it.value().get<std::uint64_t>();
+				if (v <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+					next[it.key()] = static_cast<std::int64_t>(v);
+				}
+			}
+		}
+
+		data_ = std::move(next);
+		return true;
+	} catch (const json::exception&) {
 		data_.clear();
 		return false;
 	}
-
-	data_ = std::move(parsed);
-	return true;
 }
 
 bool ConfigManager::has(const std::string& key) const {
@@ -104,132 +106,4 @@ int ConfigManager::getInt(const std::string& key, int defaultValue) const {
 	}
 
 	return defaultValue;
-}
-
-std::string ConfigManager::trim(const std::string& text) {
-	std::size_t start = 0;
-	std::size_t end = text.size();
-
-	while (start < end && std::isspace(static_cast<unsigned char>(text[start]))) {
-		++start;
-	}
-	while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-		--end;
-	}
-
-	return text.substr(start, end - start);
-}
-
-bool ConfigManager::parseStringToken(const std::string& text, std::size_t& pos, std::string& out) {
-	if (pos >= text.size() || text[pos] != '"') {
-		return false;
-	}
-
-	++pos;
-	out.clear();
-
-	while (pos < text.size()) {
-		const char ch = text[pos++];
-		if (ch == '"') {
-			return true;
-		}
-		if (ch == '\\' && pos < text.size()) {
-			const char escaped = text[pos++];
-			switch (escaped) {
-				case '"': out.push_back('"'); break;
-				case '\\': out.push_back('\\'); break;
-				case '/': out.push_back('/'); break;
-				case 'b': out.push_back('\b'); break;
-				case 'f': out.push_back('\f'); break;
-				case 'n': out.push_back('\n'); break;
-				case 'r': out.push_back('\r'); break;
-				case 't': out.push_back('\t'); break;
-				default: out.push_back(escaped); break;
-			}
-		} else {
-			out.push_back(ch);
-		}
-	}
-
-	return false;
-}
-
-bool ConfigManager::parseNumberToken(const std::string& text, std::size_t& pos, std::int64_t& out) {
-	skipWhitespace(text, pos);
-	const std::size_t start = pos;
-
-	if (pos < text.size() && (text[pos] == '-' || text[pos] == '+')) {
-		++pos;
-	}
-	while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
-		++pos;
-	}
-
-	if (start == pos) {
-		return false;
-	}
-
-	const std::string number = text.substr(start, pos - start);
-	const auto result = std::from_chars(number.data(), number.data() + number.size(), out);
-	return result.ec == std::errc{};
-}
-
-bool ConfigManager::parseJsonObject(const std::string& text, std::unordered_map<std::string, Value>& out) {
-	out.clear();
-
-	std::size_t pos = 0;
-	skipWhitespace(text, pos);
-	if (!consume(text, pos, '{')) {
-		return false;
-	}
-
-	skipWhitespace(text, pos);
-	if (pos < text.size() && text[pos] == '}') {
-		return true;
-	}
-
-	while (pos < text.size()) {
-		std::string key;
-		if (!parseStringToken(text, pos, key)) {
-			return false;
-		}
-
-		if (!consume(text, pos, ':')) {
-			return false;
-		}
-
-		skipWhitespace(text, pos);
-		if (pos >= text.size()) {
-			return false;
-		}
-
-		if (text[pos] == '"') {
-			std::string value;
-			if (!parseStringToken(text, pos, value)) {
-				return false;
-			}
-			out[key] = std::move(value);
-		} else {
-			std::int64_t number = 0;
-			if (!parseNumberToken(text, pos, number)) {
-				return false;
-			}
-			out[key] = number;
-		}
-
-		skipWhitespace(text, pos);
-		if (pos < text.size() && text[pos] == ',') {
-			++pos;
-			continue;
-		}
-
-		if (pos < text.size() && text[pos] == '}') {
-			++pos;
-			return true;
-		}
-
-		return false;
-	}
-
-	return false;
 }
