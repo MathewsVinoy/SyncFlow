@@ -2,15 +2,22 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 
 namespace {
 std::shared_ptr<spdlog::logger> g_logger;
-}
+std::mutex g_logger_mutex;
 
-void Logger::init(const std::string& folder) {
+std::shared_ptr<spdlog::logger> ensureLogger(const std::string& folder) {
+    std::lock_guard<std::mutex> lock(g_logger_mutex);
+
+    if (g_logger) {
+        return g_logger;
+    }
+
     const std::filesystem::path log_folder(folder);
     std::filesystem::create_directories(log_folder);
 
@@ -22,7 +29,25 @@ void Logger::init(const std::string& folder) {
         g_logger->flush_on(spdlog::level::info);
     }
 
-    g_logger->info("Logger initialized");
+    return g_logger;
+}
+}
+
+void Logger::init(const std::string& folder) {
+    const auto logger = ensureLogger(folder);
+    logger->info("Logger initialized");
+}
+
+void Logger::shutdown() {
+    std::lock_guard<std::mutex> lock(g_logger_mutex);
+    if (!g_logger) {
+        return;
+    }
+
+    g_logger->info("Logger shutdown");
+    g_logger->flush();
+    spdlog::drop("syncflow");
+    g_logger.reset();
 }
 
 void Logger::info(const std::string& message) {
@@ -42,17 +67,15 @@ void Logger::debug(const std::string& message) {
 }
 
 void Logger::write(const std::string& level, const std::string& message) {
-    if (!g_logger) {
-        init();
-    }
+    const auto logger = ensureLogger("log");
 
     if (level == "info") {
-        g_logger->info(message);
+        logger->info(message);
     } else if (level == "warn") {
-        g_logger->warn(message);
+        logger->warn(message);
     } else if (level == "error") {
-        g_logger->error(message);
+        logger->error(message);
     } else {
-        g_logger->debug(message);
+        logger->debug(message);
     }
 }

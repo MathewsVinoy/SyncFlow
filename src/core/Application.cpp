@@ -56,9 +56,11 @@ int Application::run() {
 
 void Application::shutdown() {
 	if (!initialized_) {
+		Logger::shutdown();
 		return;
 	}
 
 	Logger::info("Application shutting down");
+	Logger::shutdown();
 	initialized_ = false;
 }
