@@ -1,6 +1,9 @@
 #include "core/Application.h"
 
 #include "core/Logger.h"
+#include "networking/DeviceDiscovery.h"
+
+#include <thread>
 
 bool Application::init() {
 	if (!config_.load()) {
@@ -21,7 +24,33 @@ int Application::run() {
 	}
 
 	Logger::info("Application started: " + config_.getString("app_name", "SyncFlow"));
-	Logger::info("Configured port: " + std::to_string(config_.getInt("port", 0)));
+	const std::string deviceName = config_.getString("device_name", "unknown-device");
+	const int configuredPort = config_.getInt("port", 8080);
+	Logger::info("Configured port: " + std::to_string(configuredPort));
+
+	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
+
+	std::thread senderThread([&discovery]() {
+		if (!discovery.sender()) {
+			Logger::warn("Broadcast sender failed");
+			return;
+		}
+		Logger::info("Thread 1: Broadcast sender sent discovery probe");
+	});
+
+	std::thread listenerThread([&discovery]() {
+		auto peer = discovery.receiver(5000);
+		if (!peer.has_value()) {
+			Logger::warn("Thread 2: Listener timed out or failed");
+			return;
+		}
+
+		Logger::info("Thread 2: Listener received from " + peer->ip + " as " + peer->deviceName +
+		             " on port " + std::to_string(peer->port));
+	});
+
+	senderThread.join();
+	listenerThread.join();
 	return 0;
 }
 

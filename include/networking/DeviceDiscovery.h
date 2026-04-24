@@ -14,7 +14,9 @@ public:
 
 	DeviceDiscovery(std::string deviceName, std::uint16_t servicePort, std::uint16_t discoveryPort = 45454);
 
+	// Broadcast discovery probe payload: "255.255.255.255:<discovery_port>"
 	bool sender() const;
+	// Receive probe and reply with payload: "SYNCFLOW|device_name|service_port"
 	std::optional<PeerInfo> receiver(int timeoutMs = 3000) const;
 
 private:

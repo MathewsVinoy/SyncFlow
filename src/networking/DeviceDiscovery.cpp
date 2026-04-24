@@ -80,7 +80,7 @@ bool DeviceDiscovery::sender() const {
 	target.sin_port = htons(discoveryPort_);
 	target.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 
-	const std::string payload = std::string(kPrefix) + "|" + deviceName_ + "|" + std::to_string(servicePort_);
+	const std::string payload = std::string("255.255.255.255:") + std::to_string(discoveryPort_);
 	const int sent = sendto(socketFd,
 	                        payload.c_str(),
 	                        static_cast<int>(payload.size()),
@@ -149,6 +149,26 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	}
 
 	buffer[static_cast<std::size_t>(received)] = '\0';
+	const std::string request(buffer.data());
+	const std::string expectedProbe = std::string("255.255.255.255:") + std::to_string(discoveryPort_);
+	if (request != expectedProbe) {
+		closeSocket(socketFd);
+		shutdownSockets();
+		return std::nullopt;
+	}
+
+	const std::string response = std::string(kPrefix) + "|" + deviceName_ + "|" + std::to_string(servicePort_);
+	const int sent = sendto(socketFd,
+	                        response.c_str(),
+	                        static_cast<int>(response.size()),
+	                        0,
+	                        reinterpret_cast<const sockaddr*>(&senderAddr),
+	                        senderLen);
+	if (sent < 0) {
+		closeSocket(socketFd);
+		shutdownSockets();
+		return std::nullopt;
+	}
 
 	char ipBuffer[INET_ADDRSTRLEN] = {0};
 	const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
@@ -157,7 +177,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	closeSocket(socketFd);
 	shutdownSockets();
 
-	return parseMessage(std::string(buffer.data()), senderIp);
+	return PeerInfo{deviceName_, senderIp, servicePort_};
 }
 
 std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::parseMessage(const std::string& payload,
