@@ -169,3 +169,4 @@ third_party/**/*.so
 .env
 .env.local
 local.properties
+docs/
