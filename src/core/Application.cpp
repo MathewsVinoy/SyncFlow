@@ -104,7 +104,7 @@ int Application::run() {
 				Logger::info(*evt);
 			}
 
-			auto peer = discovery.receiver(1000);
+			auto peer = discovery.receiver(200);
 			if (!peer.has_value()) {
 				continue;
 			}
