@@ -69,6 +69,7 @@ int Application::run() {
 	}
 	Logger::info("Configured port: " + std::to_string(configuredPort));
 	Logger::info("Broadcast interval (ms): " + std::to_string(broadcastIntervalMs));
+	Logger::info("Discovery is using broadcast probe routing and TCP verification");
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 	Logger::info("Local device_id: " + discovery.getDeviceId());
@@ -138,16 +139,23 @@ int Application::run() {
 				activeById.emplace(peer.deviceId, peer);
 			}
 
-			std::lock_guard<std::mutex> lock(knownDevicesMutex);
-			for (auto it = knownDevices.begin(); it != knownDevices.end();) {
-				if (activeById.find(it->first) == activeById.end()) {
-					Logger::info("Device removed: id=" + it->second.deviceId + " name=" + it->second.deviceName +
-					             " ip=" + it->second.ip + " port=" + std::to_string(it->second.port));
-					tcp.removePeer(it->second.deviceId);
-					it = knownDevices.erase(it);
-				} else {
-					++it;
+			std::vector<DeviceDiscovery::PeerInfo> removedPeers;
+			{
+				std::lock_guard<std::mutex> lock(knownDevicesMutex);
+				for (auto it = knownDevices.begin(); it != knownDevices.end();) {
+					if (activeById.find(it->first) == activeById.end()) {
+						removedPeers.push_back(it->second);
+						it = knownDevices.erase(it);
+					} else {
+						++it;
+					}
 				}
+			}
+
+			for (const auto& peer : removedPeers) {
+				Logger::info("Device removed: id=" + peer.deviceId + " name=" + peer.deviceName +
+				             " ip=" + peer.ip + " port=" + std::to_string(peer.port));
+				tcp.removePeer(peer.deviceId);
 			}
 		}
 	});
