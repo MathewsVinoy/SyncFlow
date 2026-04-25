@@ -1,6 +1,7 @@
 #include "networking/DeviceDiscovery.h"
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <iomanip>
@@ -17,6 +18,8 @@
 #endif
 #else
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -93,6 +96,50 @@ std::string buildProbeMessage(std::uint16_t discoveryPort) {
 	return std::string("255.255.255.255:") + std::to_string(discoveryPort);
 }
 
+std::vector<sockaddr_in> buildBroadcastTargets(std::uint16_t discoveryPort) {
+	std::vector<sockaddr_in> targets;
+
+	auto addTarget = [&](std::uint32_t ip) {
+		sockaddr_in addr{};
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons(discoveryPort);
+		addr.sin_addr.s_addr = htonl(ip);
+		targets.push_back(addr);
+	};
+
+	addTarget(INADDR_BROADCAST);
+
+#ifndef _WIN32
+	struct ifaddrs* ifaddr = nullptr;
+	if (getifaddrs(&ifaddr) == 0) {
+		for (auto* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+				continue;
+			}
+			if ((ifa->ifa_flags & IFF_BROADCAST) == 0) {
+				continue;
+			}
+
+			auto* broad = reinterpret_cast<sockaddr_in*>(ifa->ifa_broadaddr);
+			if (broad == nullptr) {
+				continue;
+			}
+
+			sockaddr_in addr = *broad;
+			addr.sin_port = htons(discoveryPort);
+			if (std::none_of(targets.begin(), targets.end(), [&](const sockaddr_in& existing) {
+					return existing.sin_addr.s_addr == addr.sin_addr.s_addr;
+				})) {
+				targets.push_back(addr);
+			}
+		}
+		freeifaddrs(ifaddr);
+	}
+#endif
+
+	return targets;
+}
+
 constexpr std::chrono::milliseconds kDefaultInactiveTimeout{15000};
 }  // namespace
 
@@ -122,22 +169,24 @@ bool DeviceDiscovery::sender() const {
 		return false;
 	}
 
-	sockaddr_in target{};
-	target.sin_family = AF_INET;
-	target.sin_port = htons(discoveryPort_);
-	target.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-
 	const std::string payload = buildProbeMessage(discoveryPort_);
-	const int sent = sendto(socketFd,
-	                        payload.c_str(),
-	                        static_cast<int>(payload.size()),
-	                        0,
-	                        reinterpret_cast<const sockaddr*>(&target),
-	                        static_cast<SocketLen>(sizeof(target)));
+	const auto targets = buildBroadcastTargets(discoveryPort_);
+	int sentCount = 0;
+	for (const auto& addr : targets) {
+		const int sent = sendto(socketFd,
+		                        payload.c_str(),
+		                        static_cast<int>(payload.size()),
+		                        0,
+		                        reinterpret_cast<const sockaddr*>(&addr),
+		                        static_cast<SocketLen>(sizeof(addr)));
+		if (sent >= 0) {
+			++sentCount;
+		}
+	}
 
 	closeSocket(socketFd);
 	shutdownSockets();
-	return sent >= 0;
+	return sentCount > 0;
 }
 
 std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs) {
