@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
+if(POLICY CMP0135)
+	cmake_policy(SET CMP0135 NEW)
+endif()
+
 project(syncflow LANGUAGES CXX)
 
 # C++ standard setup (C++17 or C++20 requested, defaulting to C++20)
@@ -38,6 +42,7 @@ if(NOT nlohmann_json_FOUND)
 	FetchContent_Declare(
 		nlohmann_json
 		URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+		DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 	)
 	FetchContent_MakeAvailable(nlohmann_json)
 endif()
