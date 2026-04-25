@@ -5,6 +5,7 @@
 class Logger {
 public:
 	static void init(const std::string& folder = "log");
+	static void setLevel(const std::string& level);
 	static void shutdown();
 	static void info(const std::string& message);
 	static void warn(const std::string& message);

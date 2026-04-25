@@ -3,9 +3,11 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 namespace {
 std::shared_ptr<spdlog::logger> g_logger;
@@ -24,8 +26,14 @@ std::shared_ptr<spdlog::logger> ensureLogger(const std::string& folder) {
     const std::filesystem::path log_file = log_folder / "app.log";
     g_logger = spdlog::get("syncflow");
     if (!g_logger) {
-        g_logger = spdlog::basic_logger_mt("syncflow", log_file.string(), true);
+        auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file.string(), true);
+        std::vector<spdlog::sink_ptr> sinks{consoleSink, fileSink};
+
+        g_logger = std::make_shared<spdlog::logger>("syncflow", sinks.begin(), sinks.end());
+        spdlog::register_logger(g_logger);
         g_logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
+        g_logger->set_level(spdlog::level::info);
         g_logger->flush_on(spdlog::level::info);
     }
 
@@ -36,6 +44,23 @@ std::shared_ptr<spdlog::logger> ensureLogger(const std::string& folder) {
 void Logger::init(const std::string& folder) {
     const auto logger = ensureLogger(folder);
     logger->info("Logger initialized");
+}
+
+void Logger::setLevel(const std::string& level) {
+    const auto logger = ensureLogger("log");
+
+    if (level == "debug") {
+        logger->set_level(spdlog::level::debug);
+    } else if (level == "info") {
+        logger->set_level(spdlog::level::info);
+    } else if (level == "warn" || level == "warning") {
+        logger->set_level(spdlog::level::warn);
+    } else if (level == "error") {
+        logger->set_level(spdlog::level::err);
+    } else {
+        logger->set_level(spdlog::level::info);
+        logger->warn("Unknown log level '" + level + "', defaulting to info");
+    }
 }
 
 void Logger::shutdown() {

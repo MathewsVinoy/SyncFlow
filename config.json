@@ -2,5 +2,7 @@
   "app_name": "SyncFlow",
   "log_level": "info",
   "device_name": "test",
-  "port": 8080
+  "port": 8080,
+  "sync_folder": "./sync_data",
+  "broadcast_interval_ms": 2000
 }

@@ -20,26 +20,33 @@ public:
 
 	DeviceDiscovery(std::string deviceName, std::uint16_t servicePort, std::uint16_t discoveryPort = 45454);
 
-	// Broadcast discovery probe payload: "SYNCFLOW_DISCOVER|device_id|discovery_port"
+	// Broadcast discovery probe payload: "255.255.255.255:<discovery_port>"
 	bool sender() const;
-	// Receive probe/response and process payload: "SYNCFLOW|device_id|device_name|service_port"
-	std::optional<PeerInfo> receiver(int timeoutMs = 3000) const;
+	// Process probe/response packets. Responds to probe and tracks valid responses.
+	std::optional<PeerInfo> receiver(int timeoutMs = 3000);
 
-	std::vector<PeerInfo> getActiveDevices() const;
-	void removeInactiveDevices(std::chrono::seconds maxAge = std::chrono::seconds(15)) const;
-	const std::string& deviceId() const;
+	std::vector<PeerInfo> getActiveDevices(int inactiveTimeoutMs = 15000);
+	std::string getDeviceId() const;
 
 private:
-	std::string deviceId_;
+	struct TrackedDevice {
+		PeerInfo peer;
+	};
+
 	std::string deviceName_;
+	std::string deviceId_;
 	std::uint16_t servicePort_;
 	std::uint16_t discoveryPort_;
 
-	mutable std::mutex peersMutex_;
-	mutable std::unordered_map<std::string, PeerInfo> peersById_;
+	mutable std::mutex devicesMutex_;
+	std::unordered_map<std::string, TrackedDevice> devices_;
 
-	std::optional<PeerInfo> upsertPeer(const PeerInfo& peer) const;
-	std::optional<PeerInfo> parseResponseMessage(const std::string& payload, const std::string& senderIp) const;
-	bool isValidDeviceId(const std::string& value) const;
-	bool isValidDeviceName(const std::string& value) const;
+	static std::optional<PeerInfo> parseMessage(const std::string& payload, const std::string& senderIp);
+	static bool isValidDeviceId(const std::string& deviceId);
+	static bool isValidDeviceName(const std::string& deviceName);
+	static std::string createDeviceId();
+
+	bool upsertDevice(const PeerInfo& peer, std::chrono::milliseconds inactiveTimeout);
+	void removeInactiveLocked(std::chrono::steady_clock::time_point now,
+	                        std::chrono::milliseconds inactiveTimeout);
 };
