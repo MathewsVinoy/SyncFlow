@@ -172,3 +172,4 @@ third_party/**/*.so
 local.properties
 docs/
 checkmate/
+config.json
