@@ -2,6 +2,7 @@
 
 #include "core/Logger.h"
 #include "networking/DeviceDiscovery.h"
+#include "networking/TcpHandshake.h"
 
 #include <atomic>
 #include <chrono>
@@ -71,6 +72,11 @@ int Application::run() {
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 	Logger::info("Local device_id: " + discovery.getDeviceId());
+	TcpHandshake tcp(discovery.getDeviceId(), deviceName, static_cast<std::uint16_t>(configuredPort));
+	if (!tcp.start()) {
+		Logger::error("TCP handshake listener failed to start on port " + std::to_string(configuredPort));
+		return 1;
+	}
 
 	g_keepRunning.store(true);
 	std::signal(SIGINT, handleStopSignal);
@@ -91,10 +97,15 @@ int Application::run() {
 		}
 	});
 
-	std::thread listenerThread([&discovery, &knownDevicesMutex, &knownDevices]() {
+	std::thread listenerThread([&discovery, &tcp, &knownDevicesMutex, &knownDevices]() {
 		while (g_keepRunning.load()) {
 			auto peer = discovery.receiver(1000);
 			if (!peer.has_value()) {
+				auto incoming = tcp.pollAccepted(100);
+				if (incoming.has_value()) {
+					Logger::info("TCP verified incoming HELLO: id=" + incoming->deviceId + " name=" + incoming->deviceName +
+					             " ip=" + incoming->ip + " port=" + std::to_string(incoming->port));
+				}
 				continue;
 			}
 
@@ -114,6 +125,21 @@ int Application::run() {
 			          << std::endl;
 			Logger::info("Device " + event + ": id=" + peer->deviceId + " name=" + peer->deviceName +
 			             " ip=" + peer->ip + " port=" + std::to_string(peer->port));
+
+			auto verified = tcp.connectAndHandshake(peer->ip, peer->port, 1500);
+			if (!verified.has_value()) {
+				Logger::warn("TCP HELLO verification failed for device id=" + peer->deviceId + " ip=" + peer->ip +
+				             " port=" + std::to_string(peer->port));
+				continue;
+			}
+
+			if (verified->deviceId != peer->deviceId) {
+				Logger::warn("TCP HELLO mismatch: discovery id=" + peer->deviceId + " tcp id=" + verified->deviceId);
+				continue;
+			}
+
+			Logger::info("TCP HELLO verified: id=" + verified->deviceId + " name=" + verified->deviceName +
+			             " ip=" + verified->ip + " port=" + std::to_string(verified->port));
 		}
 	});
 
@@ -142,6 +168,7 @@ int Application::run() {
 	senderThread.join();
 	listenerThread.join();
 	cleanupThread.join();
+	tcp.stop();
 	Logger::info("Discovery loop stopped");
 	return 0;
 }
