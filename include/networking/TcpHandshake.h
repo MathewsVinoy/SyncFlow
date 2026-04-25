@@ -1,10 +1,14 @@
 #pragma once
 
-#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <deque>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 class TcpHandshake {
 public:
@@ -20,19 +24,47 @@ public:
 
 	bool start();
 	void stop();
+	void tick();
 
-	std::optional<RemoteDevice> pollAccepted(int timeoutMs = 200);
-	std::optional<RemoteDevice> connectAndHandshake(const std::string& ip, std::uint16_t port, int timeoutMs = 2000);
+	void observePeer(const RemoteDevice& peer);
+	void removePeer(const std::string& deviceId);
+
+	std::optional<std::string> pollEvent();
+	std::vector<RemoteDevice> getConnectedPeers() const;
 
 private:
+	struct ConnectionState {
+		RemoteDevice remote;
+		std::intptr_t socket = -1;
+		bool connected = false;
+		bool outbound = false;
+		std::string readBuffer;
+		std::chrono::steady_clock::time_point lastPingSent{};
+		std::chrono::steady_clock::time_point lastPongSeen{};
+		std::chrono::steady_clock::time_point nextRetry{};
+	};
+
 	std::string localDeviceId_;
 	std::string localDeviceName_;
 	std::uint16_t listenPort_;
-	std::atomic<bool> running_{false};
+	bool running_;
 	std::intptr_t listenSocket_;
+
+	mutable std::mutex stateMutex_;
+	std::unordered_map<std::string, ConnectionState> states_;
+	std::deque<std::string> events_;
+
+	void pushEventLocked(const std::string& event);
+	void acceptIncoming();
+	void processConnections();
+	void disconnectLocked(ConnectionState& state, const std::string& reason);
+	bool connectAndHandshakeLocked(ConnectionState& state);
+	bool processIncomingLinesLocked(ConnectionState& state);
 
 	static bool isValidDeviceId(const std::string& value);
 	static bool isValidDeviceName(const std::string& value);
 	static std::string buildHello(const std::string& id, const std::string& name);
+	static bool isValidControlLine(const std::string& text);
+	static bool shouldInitiate(const std::string& localId, const std::string& remoteId);
 	static std::optional<RemoteDevice> parseHello(const std::string& text, const std::string& ip, std::uint16_t port);
 };

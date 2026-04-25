@@ -99,13 +99,13 @@ int Application::run() {
 
 	std::thread listenerThread([&discovery, &tcp, &knownDevicesMutex, &knownDevices]() {
 		while (g_keepRunning.load()) {
+			tcp.tick();
+			while (auto evt = tcp.pollEvent()) {
+				Logger::info(*evt);
+			}
+
 			auto peer = discovery.receiver(1000);
 			if (!peer.has_value()) {
-				auto incoming = tcp.pollAccepted(100);
-				if (incoming.has_value()) {
-					Logger::info("TCP verified incoming HELLO: id=" + incoming->deviceId + " name=" + incoming->deviceName +
-					             " ip=" + incoming->ip + " port=" + std::to_string(incoming->port));
-				}
 				continue;
 			}
 
@@ -125,25 +125,11 @@ int Application::run() {
 			          << std::endl;
 			Logger::info("Device " + event + ": id=" + peer->deviceId + " name=" + peer->deviceName +
 			             " ip=" + peer->ip + " port=" + std::to_string(peer->port));
-
-			auto verified = tcp.connectAndHandshake(peer->ip, peer->port, 1500);
-			if (!verified.has_value()) {
-				Logger::warn("TCP HELLO verification failed for device id=" + peer->deviceId + " ip=" + peer->ip +
-				             " port=" + std::to_string(peer->port));
-				continue;
-			}
-
-			if (verified->deviceId != peer->deviceId) {
-				Logger::warn("TCP HELLO mismatch: discovery id=" + peer->deviceId + " tcp id=" + verified->deviceId);
-				continue;
-			}
-
-			Logger::info("TCP HELLO verified: id=" + verified->deviceId + " name=" + verified->deviceName +
-			             " ip=" + verified->ip + " port=" + std::to_string(verified->port));
+			tcp.observePeer(TcpHandshake::RemoteDevice{peer->deviceId, peer->deviceName, peer->ip, peer->port});
 		}
 	});
 
-	std::thread cleanupThread([&discovery, &knownDevicesMutex, &knownDevices]() {
+	std::thread cleanupThread([&discovery, &tcp, &knownDevicesMutex, &knownDevices]() {
 		while (g_keepRunning.load()) {
 			std::this_thread::sleep_for(std::chrono::seconds(1));
 			auto active = discovery.getActiveDevices(15000);
@@ -157,6 +143,7 @@ int Application::run() {
 				if (activeById.find(it->first) == activeById.end()) {
 					Logger::info("Device removed: id=" + it->second.deviceId + " name=" + it->second.deviceName +
 					             " ip=" + it->second.ip + " port=" + std::to_string(it->second.port));
+					tcp.removePeer(it->second.deviceId);
 					it = knownDevices.erase(it);
 				} else {
 					++it;
