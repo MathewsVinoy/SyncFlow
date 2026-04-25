@@ -683,6 +683,7 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 				closeSocket(client);
 				continue;
 			}
+			pushEventLocked("TCP HELLO verified (incoming): id=" + remote->deviceId + " name=" + remote->deviceName);
 
 			auto& state = states_[remote->deviceId];
 			if (state.connected) {
@@ -730,6 +731,7 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 					continue;
 				}
 				state.lastPingSent = now;
+				pushEventLocked("TCP heartbeat PING sent: id=" + state.remote.deviceId);
 			}
 
 			if (!processIncomingLinesLocked(state)) {
@@ -772,6 +774,8 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 			closeSocket(fd);
 			return false;
 		}
+		pushEventLocked("TCP connect attempt: id=" + state.remote.deviceId + " ip=" + state.remote.ip +
+		               " port=" + std::to_string(state.remote.port));
 
 		const std::string hello = buildHello(localDeviceId_, localDeviceName_);
 		if (send(fd, hello.c_str(), static_cast<int>(hello.size()), 0) < 0) {
@@ -798,6 +802,7 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 			pushEventLocked("TCP invalid HELLO response ignored for id=" + state.remote.deviceId);
 			return false;
 		}
+		pushEventLocked("TCP HELLO verified (outgoing): id=" + remote->deviceId + " name=" + remote->deviceName);
 
 		if (!setNonBlocking(fd, true)) {
 			closeSocket(fd);
@@ -855,8 +860,10 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 					if (send(fd, pong.c_str(), static_cast<int>(pong.size()), 0) < 0) {
 						return false;
 					}
+					pushEventLocked("TCP heartbeat PONG sent: id=" + state.remote.deviceId);
 				} else if (line == "PONG") {
 					state.lastPongSeen = std::chrono::steady_clock::now();
+					pushEventLocked("TCP heartbeat PONG received: id=" + state.remote.deviceId);
 				}
 			}
 		}
