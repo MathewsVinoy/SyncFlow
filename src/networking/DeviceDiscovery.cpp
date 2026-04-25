@@ -203,14 +203,17 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 	const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
 
 	if (payload == buildProbeMessage(discoveryPort_)) {
+		sockaddr_in responseTarget = senderAddr;
+		responseTarget.sin_port = htons(discoveryPort_);
+
 		const std::string response =
 			std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" + std::to_string(servicePort_);
 		const int sent = sendto(socketFd,
 		                        response.c_str(),
 		                        static_cast<int>(response.size()),
 		                        0,
-		                        reinterpret_cast<const sockaddr*>(&senderAddr),
-		                        senderLen);
+		                        reinterpret_cast<const sockaddr*>(&responseTarget),
+		                        static_cast<SocketLen>(sizeof(responseTarget)));
 
 		closeSocket(socketFd);
 		shutdownSockets();
