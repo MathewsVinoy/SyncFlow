@@ -101,6 +101,15 @@ bool wouldBlock() {
 #endif
 }
 
+bool connectCompleted(SocketHandle socketFd) {
+	int soError = 0;
+	SocketLen len = static_cast<SocketLen>(sizeof(soError));
+	if (getsockopt(socketFd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &len) < 0) {
+		return false;
+	}
+	return soError == 0;
+}
+
 std::string socketIp(const sockaddr_in& addr) {
 	char ipBuffer[INET_ADDRSTRLEN] = {0};
 	const char* result = inet_ntop(AF_INET, &addr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
@@ -359,7 +368,7 @@ void TcpHandshake::processConnections() {
 
 	for (auto& [_, st] : states_) {
 		if (!st.connected) {
-			if (!shouldInitiate(localDeviceId_, st.remote.deviceId) || now < st.nextRetry) {
+			if (now < st.nextRetry) {
 				continue;
 			}
 			if (!connectAndHandshakeLocked(st)) {
@@ -431,6 +440,11 @@ bool TcpHandshake::connectAndHandshakeLocked(ConnectionState& st) {
 	FD_SET(fd, &wset);
 	timeval tv{kHandshakeTimeoutMs / 1000, (kHandshakeTimeoutMs % 1000) * 1000};
 	if (select(static_cast<int>(fd) + 1, nullptr, &wset, nullptr, &tv) <= 0) {
+		closeSocket(fd);
+		return false;
+	}
+
+	if (!connectCompleted(fd)) {
 		closeSocket(fd);
 		return false;
 	}

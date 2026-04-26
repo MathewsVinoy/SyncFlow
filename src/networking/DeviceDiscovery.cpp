@@ -1,5 +1,7 @@
 #include "networking/DeviceDiscovery.h"
 
+#include "core/Logger.h"
+
 #include <array>
 #include <algorithm>
 #include <cctype>
@@ -220,14 +222,43 @@ bool DeviceDiscovery::sender() const {
 	const auto targets = buildBroadcastTargets(discoveryPort_);
 	int sentCount = 0;
 	for (const auto& addr : targets) {
-		const int sent = sendto(socketFd,
-		                        payload.c_str(),
-		                        static_cast<int>(payload.size()),
-		                        0,
-		                        reinterpret_cast<const sockaddr*>(&addr),
-		                        static_cast<SocketLen>(sizeof(addr)));
-		if (sent >= 0) {
+		char targetIpBuffer[INET_ADDRSTRLEN] = {0};
+		const char* targetIp = inet_ntop(AF_INET, &addr.sin_addr, targetIpBuffer, INET_ADDRSTRLEN);
+		const std::string targetIpStr = targetIp != nullptr ? std::string(targetIp) : std::string("unknown");
+
+		const int sentProbe = sendto(socketFd,
+		                             payload.c_str(),
+		                             static_cast<int>(payload.size()),
+		                             0,
+		                             reinterpret_cast<const sockaddr*>(&addr),
+		                             static_cast<SocketLen>(sizeof(addr)));
+		if (sentProbe >= 0) {
 			++sentCount;
+			Logger::info("Discovery TX probe: to=" + targetIpStr + ":" + std::to_string(discoveryPort_) +
+			             " payload='" + payload + "'");
+		} else {
+			Logger::warn("Discovery TX probe failed: to=" + targetIpStr + ":" + std::to_string(discoveryPort_));
+		}
+
+		std::string announce = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
+		                      std::to_string(servicePort_);
+		const std::string advertisedIp = localIpForRemote(addr);
+		if (!advertisedIp.empty()) {
+			announce += "|" + advertisedIp;
+		}
+
+		const int sentAnnounce = sendto(socketFd,
+		                                announce.c_str(),
+		                                static_cast<int>(announce.size()),
+		                                0,
+		                                reinterpret_cast<const sockaddr*>(&addr),
+		                                static_cast<SocketLen>(sizeof(addr)));
+		if (sentAnnounce >= 0) {
+			++sentCount;
+			Logger::info("Discovery TX announce: to=" + targetIpStr + ":" + std::to_string(discoveryPort_) +
+			             " payload='" + announce + "'");
+		} else {
+			Logger::warn("Discovery TX announce failed: to=" + targetIpStr + ":" + std::to_string(discoveryPort_));
 		}
 	}
 
@@ -302,6 +333,8 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		char ipBuffer[INET_ADDRSTRLEN] = {0};
 		const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
 		const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
+		Logger::info("Discovery RX packet: from=" + senderIp + ":" + std::to_string(discoveryPort_) +
+		             " payload='" + payload + "'");
 
 		if (payload == buildProbeMessage(discoveryPort_)) {
 			sockaddr_in responseTarget = senderAddr;
@@ -313,12 +346,18 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 			if (!advertisedIp.empty()) {
 				response += "|" + advertisedIp;
 			}
-			sendto(socketFd,
+			const int sentResponse = sendto(socketFd,
 			       response.c_str(),
 			       static_cast<int>(response.size()),
 			       0,
 			       reinterpret_cast<const sockaddr*>(&responseTarget),
 			       static_cast<SocketLen>(sizeof(responseTarget)));
+			if (sentResponse >= 0) {
+				Logger::info("Discovery TX response: to=" + senderIp + ":" + std::to_string(discoveryPort_) +
+				             " payload='" + response + "'");
+			} else {
+				Logger::warn("Discovery TX response failed: to=" + senderIp + ":" + std::to_string(discoveryPort_));
+			}
 			continue;
 		}
 
@@ -329,6 +368,8 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 
 		const bool shouldNotify = upsertDevice(*parsed, kDefaultInactiveTimeout);
 		if (shouldNotify) {
+			Logger::info("Discovery RX parsed peer: id=" + parsed->deviceId + " name=" + parsed->deviceName +
+			             " ip=" + parsed->ip + " port=" + std::to_string(parsed->port));
 			discovered = parsed;
 			break;
 		}
