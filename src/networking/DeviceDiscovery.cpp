@@ -141,6 +141,23 @@ std::vector<sockaddr_in> buildBroadcastTargets(std::uint16_t discoveryPort) {
 }
 
 constexpr std::chrono::milliseconds kDefaultInactiveTimeout{15000};
+
+bool waitReadable(SocketHandle socketFd, int timeoutMs) {
+	if (timeoutMs < 0) {
+		timeoutMs = 0;
+	}
+
+	fd_set readSet;
+	FD_ZERO(&readSet);
+	FD_SET(socketFd, &readSet);
+
+	timeval timeout{};
+	timeout.tv_sec = timeoutMs / 1000;
+	timeout.tv_usec = (timeoutMs % 1000) * 1000;
+
+	const int ready = select(static_cast<int>(socketFd) + 1, &readSet, nullptr, nullptr, &timeout);
+	return ready > 0;
+}
 }  // namespace
 
 DeviceDiscovery::DeviceDiscovery(std::string deviceName, std::uint16_t servicePort, std::uint16_t discoveryPort)
@@ -190,6 +207,10 @@ bool DeviceDiscovery::sender() const {
 }
 
 std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs) {
+	if (timeoutMs <= 0) {
+		return std::nullopt;
+	}
+
 	if (!initSockets()) {
 		return std::nullopt;
 	}
@@ -209,14 +230,6 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		return std::nullopt;
 	}
 
-#ifdef _WIN32
-	const DWORD winTimeout = timeoutMs < 0 ? 0 : static_cast<DWORD>(timeoutMs);
-	setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&winTimeout), sizeof(winTimeout));
-#else
-	const timeval timeout{timeoutMs / 1000, (timeoutMs % 1000) * 1000};
-	setsockopt(socketFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-#endif
-
 	sockaddr_in local{};
 	local.sin_family = AF_INET;
 	local.sin_port = htons(discoveryPort_);
@@ -228,69 +241,68 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		return std::nullopt;
 	}
 
-	std::array<char, 1024> buffer{};
-	sockaddr_in senderAddr{};
-	SocketLen senderLen = static_cast<SocketLen>(sizeof(senderAddr));
-	const int received = recvfrom(socketFd,
-	                              buffer.data(),
-	                              static_cast<int>(buffer.size() - 1),
-	                              0,
-	                              reinterpret_cast<sockaddr*>(&senderAddr),
-	                              &senderLen);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	std::optional<PeerInfo> discovered;
 
-	if (received < 0) {
-		closeSocket(socketFd);
-		shutdownSockets();
-		return std::nullopt;
-	}
-
-	buffer[static_cast<std::size_t>(received)] = '\0';
-	const std::string payload(buffer.data());
-
-	char ipBuffer[INET_ADDRSTRLEN] = {0};
-	const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
-	const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
-
-	if (payload == buildProbeMessage(discoveryPort_)) {
-		sockaddr_in responseTarget = senderAddr;
-		responseTarget.sin_port = htons(discoveryPort_);
-
-		const std::string response =
-			std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" + std::to_string(servicePort_);
-		const int sent = sendto(socketFd,
-		                        response.c_str(),
-		                        static_cast<int>(response.size()),
-		                        0,
-		                        reinterpret_cast<const sockaddr*>(&responseTarget),
-		                        static_cast<SocketLen>(sizeof(responseTarget)));
-
-		closeSocket(socketFd);
-		shutdownSockets();
-		if (sent < 0) {
-			return std::nullopt;
+	while (std::chrono::steady_clock::now() < deadline) {
+		const auto now = std::chrono::steady_clock::now();
+		const auto remainingMs = static_cast<int>(
+			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+		if (remainingMs <= 0 || !waitReadable(socketFd, remainingMs)) {
+			break;
 		}
 
-		return std::nullopt;
+		std::array<char, 1024> buffer{};
+		sockaddr_in senderAddr{};
+		SocketLen senderLen = static_cast<SocketLen>(sizeof(senderAddr));
+		const int received = recvfrom(socketFd,
+		                              buffer.data(),
+		                              static_cast<int>(buffer.size() - 1),
+		                              0,
+		                              reinterpret_cast<sockaddr*>(&senderAddr),
+		                              &senderLen);
+
+		if (received < 0) {
+			continue;
+		}
+
+		buffer[static_cast<std::size_t>(received)] = '\0';
+		const std::string payload(buffer.data());
+
+		char ipBuffer[INET_ADDRSTRLEN] = {0};
+		const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
+		const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
+
+		if (payload == buildProbeMessage(discoveryPort_)) {
+			sockaddr_in responseTarget = senderAddr;
+			responseTarget.sin_port = htons(discoveryPort_);
+
+			const std::string response = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
+			                             std::to_string(servicePort_);
+			sendto(socketFd,
+			       response.c_str(),
+			       static_cast<int>(response.size()),
+			       0,
+			       reinterpret_cast<const sockaddr*>(&responseTarget),
+			       static_cast<SocketLen>(sizeof(responseTarget)));
+			continue;
+		}
+
+		auto parsed = parseMessage(payload, senderIp);
+		if (!parsed.has_value() || parsed->deviceId == deviceId_) {
+			continue;
+		}
+
+		const bool shouldNotify = upsertDevice(*parsed, kDefaultInactiveTimeout);
+		if (shouldNotify) {
+			discovered = parsed;
+			break;
+		}
 	}
 
 	closeSocket(socketFd);
 	shutdownSockets();
-
-	auto parsed = parseMessage(payload, senderIp);
-	if (!parsed.has_value()) {
-		return std::nullopt;
-	}
-
-	if (parsed->deviceId == deviceId_) {
-		return std::nullopt;
-	}
-
-	const bool shouldNotify = upsertDevice(*parsed, kDefaultInactiveTimeout);
-	if (!shouldNotify) {
-		return std::nullopt;
-	}
-
-	return parsed;
+	return discovered;
 }
 
 std::vector<DeviceDiscovery::PeerInfo> DeviceDiscovery::getActiveDevices(int inactiveTimeoutMs) {
