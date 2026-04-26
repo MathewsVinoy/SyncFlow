@@ -88,6 +88,13 @@ function(syncflow_add_module target_name)
 			)
 		endif()
 
+		if(target_name STREQUAL "sync_engine")
+			target_link_libraries(${target_name}
+				PRIVATE
+					core
+			)
+		endif()
+
 		if(target_name STREQUAL "networking" AND WIN32)
 			target_link_libraries(${target_name}
 				PRIVATE
