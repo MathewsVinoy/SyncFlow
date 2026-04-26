@@ -1,10 +1,10 @@
 {
   "app_name": "SyncFlow",
-  "log_level": "info",
-  "device_name": "test",
-  "port": 8080,
-  "sync_folder": "./sync_data",
-  "mirror_folder": "./sync_data/.syncflow_mirror",
   "broadcast_interval_ms": 2000,
-  "security_shared_secret": "change-me-in-production"
+  "device_name": "test",
+  "log_level": "info",
+  "mirror_folder": "./sync_data/.syncflow_mirror",
+  "port": 8080,
+  "security_shared_secret": "change-me-in-production",
+  "sync_folder": "/mnt/myworld/dev/open_source_projects/syncflow/./sync_data_cli"
 }

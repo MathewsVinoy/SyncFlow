@@ -179,8 +179,23 @@ int startDaemon(const std::filesystem::path& pidFile) {
 		return 1;
 	}
 	if (pid > 0) {
-		std::cout << "syncflow daemon started (PID " << pid << ")\n";
-		return 0;
+		for (int i = 0; i < 20; ++i) {
+			if (!isProcessRunning(pid)) {
+				std::cerr << "syncflow daemon failed to start\n";
+				return 1;
+			}
+
+			const pid_t writtenPid = readPidFile(pidFile);
+			if (writtenPid == pid && isProcessRunning(writtenPid)) {
+				std::cout << "syncflow daemon started (PID " << pid << ")\n";
+				return 0;
+			}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+
+		std::cerr << "syncflow daemon startup timed out\n";
+		return 1;
 	}
 
 	if (setsid() < 0) {
@@ -188,7 +203,6 @@ int startDaemon(const std::filesystem::path& pidFile) {
 	}
 
 	umask(0);
-	chdir("/");
 
 	const int nullFd = open("/dev/null", O_RDWR);
 	if (nullFd >= 0) {
@@ -214,15 +228,15 @@ int startDaemon(const std::filesystem::path& pidFile) {
 int stopDaemon(const std::filesystem::path& pidFile) {
 	const pid_t pid = readPidFile(pidFile);
 	if (pid <= 0) {
-		std::cerr << "syncflow daemon is not running\n";
-		return 1;
+		std::cout << "syncflow daemon is not running\n";
+		return 0;
 	}
 
 	if (!isProcessRunning(pid)) {
 		std::error_code ec;
 		std::filesystem::remove(pidFile, ec);
-		std::cerr << "stale PID file removed\n";
-		return 1;
+		std::cout << "stale PID file removed\n";
+		return 0;
 	}
 
 	if (kill(pid, SIGTERM) != 0) {
