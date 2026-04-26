@@ -1,9 +1,12 @@
 #include "sync_engine/SyncEngine.h"
 
 #include "core/Logger.h"
+#include "sync_engine/HashUtils.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <sstream>
 #include <system_error>
 
 namespace {
@@ -26,6 +29,7 @@ bool copyFileContents(const std::filesystem::path& source, const std::filesystem
 SyncEngine::SyncEngine(std::filesystem::path sourceFolder, std::filesystem::path mirrorFolder)
 	: sourceFolder_(std::move(sourceFolder)),
 	  mirrorFolder_(mirrorFolder.empty() ? sourceFolder_ / ".syncflow_mirror" : std::move(mirrorFolder)),
+	  versionFolder_(mirrorFolder_ / ".versions"),
 	  workers_(2) {}
 
 SyncEngine::~SyncEngine() {
@@ -50,6 +54,11 @@ bool SyncEngine::start() {
 	std::filesystem::create_directories(mirrorFolder_, ec);
 	if (ec) {
 		recordEvent("sync engine failed to create mirror folder: " + mirrorFolder_.string());
+		return false;
+	}
+	std::filesystem::create_directories(versionFolder_, ec);
+	if (ec) {
+		recordEvent("sync engine failed to create version folder: " + versionFolder_.string());
 		return false;
 	}
 
@@ -104,6 +113,31 @@ std::size_t SyncEngine::trackedFileCount() const {
 	return lastSnapshot_.size();
 }
 
+std::unordered_map<std::string, syncflow::engine::FileMetadata> SyncEngine::localMetadata(
+	const std::string& localDeviceId) const {
+	std::lock_guard<std::mutex> lock(stateMutex_);
+	std::unordered_map<std::string, syncflow::engine::FileMetadata> out;
+	out.reserve(lastSnapshot_.size());
+	for (const auto& [path, entry] : lastSnapshot_) {
+		syncflow::engine::FileMetadata item;
+		item.relativePath = path;
+		item.size = static_cast<std::uint64_t>(entry.size);
+		item.modifiedUnixSeconds = entry.modifiedUnixSeconds;
+		item.hash = entry.hash;
+		item.lastEditorDeviceId = localDeviceId;
+		item.deleted = false;
+		out.emplace(path, std::move(item));
+	}
+	return out;
+}
+
+std::vector<syncflow::engine::SyncAction> SyncEngine::planAgainstRemote(
+	const std::unordered_map<std::string, syncflow::engine::FileMetadata>& remote,
+	const std::string& localDeviceId) const {
+	syncflow::engine::SyncPlanner planner(localDeviceId);
+	return planner.plan(localMetadata(localDeviceId), remote);
+}
+
 void SyncEngine::runLoop() {
 	while (true) {
 		{
@@ -128,23 +162,34 @@ void SyncEngine::scanAndSync() {
 
 	for (const auto& [relString, entry] : snapshot) {
 		auto prevIt = previous.find(relString);
-		const bool changed = prevIt == previous.end() || prevIt->second.size != entry.size ||
-		                     prevIt->second.modifiedAt != entry.modifiedAt;
+		const bool isNew = prevIt == previous.end();
+		const bool changed = isNew || prevIt->second.size != entry.size ||
+		                     prevIt->second.modifiedAt != entry.modifiedAt || prevIt->second.hash != entry.hash;
 		if (!changed) {
 			continue;
 		}
 
 		const auto source = sourceFolder_ / std::filesystem::path(relString);
 		const auto destination = mirrorFolder_ / std::filesystem::path(relString);
+		if (!isNew) {
+			archiveVersionIfExists(destination, relString);
+		}
 		copyFileAsync(source, destination);
+		recordEvent(std::string(isNew ? "file created: " : "file updated: ") + relString);
 		Logger::info("sync copy scheduled: " + source.string() + " -> " + destination.string());
 	}
 
-	for (const auto& [relString, _] : previous) {
+	for (const auto& [relString, deletedEntry] : previous) {
 		if (snapshot.find(relString) == snapshot.end()) {
 			const auto destination = mirrorFolder_ / std::filesystem::path(relString);
+			archiveVersionIfExists(destination, relString);
 			std::error_code ec;
 			std::filesystem::remove(destination, ec);
+			if (ec) {
+				Logger::warn("sync failed removing mirrored file: " + destination.string());
+			} else {
+				recordEvent("file deleted: " + relString + " at " + std::to_string(deletedEntry.modifiedUnixSeconds));
+			}
 			Logger::info("sync removed mirrored file: " + destination.string());
 		}
 	}
@@ -171,6 +216,30 @@ void SyncEngine::copyFileAsync(const std::filesystem::path& source, const std::f
 		}
 		Logger::info("sync copied: " + source.string() + " -> " + destination.string());
 	});
+}
+
+void SyncEngine::archiveVersionIfExists(const std::filesystem::path& mirroredFile, const std::string& relativePath) {
+	std::error_code ec;
+	if (!std::filesystem::exists(mirroredFile, ec) || ec) {
+		return;
+	}
+
+	const auto now = std::chrono::system_clock::now();
+	const auto unixSeconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+	const auto versionFile = versionFolder_ / (relativePath + "." + std::to_string(unixSeconds) + ".bak");
+	std::filesystem::create_directories(versionFile.parent_path(), ec);
+	if (ec) {
+		Logger::warn("sync could not create version folder for: " + versionFile.string());
+		return;
+	}
+
+	std::filesystem::copy_file(mirroredFile, versionFile, std::filesystem::copy_options::overwrite_existing, ec);
+	if (ec) {
+		Logger::warn("sync could not archive old version: " + mirroredFile.string());
+		return;
+	}
+
+	Logger::debug("sync archived version: " + versionFile.string());
 }
 
 std::unordered_map<std::string, SyncEngine::FileEntry> SyncEngine::buildSnapshot() const {
@@ -213,7 +282,12 @@ std::unordered_map<std::string, SyncEngine::FileEntry> SyncEngine::buildSnapshot
 			continue;
 		}
 
-		snapshot.emplace(toGenericString(rel), FileEntry{size, modified});
+		const auto hash = syncflow::hash::hashFileFNV1a64(entry.path());
+		if (hash.empty()) {
+			continue;
+		}
+
+		snapshot.emplace(toGenericString(rel), FileEntry{size, modified, toUnixSeconds(modified), hash});
 	}
 
 	return snapshot;
@@ -237,4 +311,10 @@ bool SyncEngine::isInsideMirror(const std::filesystem::path& mirrorRoot, const s
 
 	const auto mismatch = std::mismatch(mirrorCanonical.begin(), mirrorCanonical.end(), candidateCanonical.begin(), candidateCanonical.end());
 	return mismatch.first == mirrorCanonical.end();
+}
+
+std::int64_t SyncEngine::toUnixSeconds(std::filesystem::file_time_type timePoint) {
+	using namespace std::chrono;
+	const auto adjusted = timePoint - std::filesystem::file_time_type::clock::now() + system_clock::now();
+	return duration_cast<seconds>(adjusted.time_since_epoch()).count();
 }

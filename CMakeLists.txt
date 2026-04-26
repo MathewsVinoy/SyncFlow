@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT SYNCFLOW_IPO_SUPPORTED OUTPUT SYNCFLOW_IPO_ERROR)
 find_package(Threads REQUIRED)
+include(CTest)
 
 # Third-party dependencies
 set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
@@ -95,6 +96,13 @@ function(syncflow_add_module target_name)
 			)
 		endif()
 
+		if(target_name STREQUAL "security")
+			target_link_libraries(${target_name}
+				PRIVATE
+					crypto
+			)
+		endif()
+
 		if(target_name STREQUAL "networking" AND WIN32)
 			target_link_libraries(${target_name}
 				PRIVATE
@@ -153,4 +161,29 @@ target_link_libraries(app
 
 if(SYNCFLOW_IPO_SUPPORTED)
 	set_property(TARGET app PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
+
+if(BUILD_TESTING)
+	add_executable(syncflow_tests
+		tests/test_sync_core.cpp
+	)
+
+	target_include_directories(syncflow_tests
+		PRIVATE
+			"${PROJECT_SOURCE_DIR}/include"
+	)
+
+	target_link_libraries(syncflow_tests
+		PRIVATE
+			core
+			networking
+			sync_engine
+			crypto
+			security
+			Threads::Threads
+			syncflow_warnings
+			syncflow_release_opts
+	)
+
+	add_test(NAME syncflow_tests COMMAND syncflow_tests)
 endif()
