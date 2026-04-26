@@ -29,13 +29,27 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-## Run
+## Run (Foreground)
 
 ```bash
 ./build/app
 ```
 
 Keep `config.json` in the project root when running.
+
+## CLI Commands
+
+```bash
+./build/app start
+./build/app stop
+./build/app set-sync-path /absolute/or/relative/path
+./build/app run
+```
+
+- `start`: starts the daemon and writes a PID file (default: `/tmp/syncflow.pid`).
+- `stop`: stops the daemon via SIGTERM using the PID file.
+- `set-sync-path`: updates `sync_folder` in `config.json` and creates the folder.
+- `run`: explicit foreground mode (same behavior as running without arguments).
 
 ## Test
 
