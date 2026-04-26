@@ -92,6 +92,36 @@ bool isDigitsOnly(const std::string& value) {
 	return true;
 }
 
+bool isValidIpv4(const std::string& ip) {
+	in_addr addr{};
+	return inet_pton(AF_INET, ip.c_str(), &addr) == 1;
+}
+
+std::string localIpForRemote(const sockaddr_in& remoteAddr) {
+	const SocketHandle fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd == kInvalidSocket) {
+		return {};
+	}
+
+	sockaddr_in remote = remoteAddr;
+	if (connect(fd, reinterpret_cast<const sockaddr*>(&remote), static_cast<SocketLen>(sizeof(remote))) < 0) {
+		closeSocket(fd);
+		return {};
+	}
+
+	sockaddr_in local{};
+	SocketLen localLen = static_cast<SocketLen>(sizeof(local));
+	if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &localLen) < 0) {
+		closeSocket(fd);
+		return {};
+	}
+
+	char ipBuffer[INET_ADDRSTRLEN] = {0};
+	const char* ipResult = inet_ntop(AF_INET, &local.sin_addr, ipBuffer, INET_ADDRSTRLEN);
+	closeSocket(fd);
+	return ipResult != nullptr ? std::string(ipBuffer) : std::string();
+}
+
 std::string buildProbeMessage(std::uint16_t discoveryPort) {
 	return std::string("255.255.255.255:") + std::to_string(discoveryPort);
 }
@@ -276,9 +306,13 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		if (payload == buildProbeMessage(discoveryPort_)) {
 			sockaddr_in responseTarget = senderAddr;
 			responseTarget.sin_port = htons(discoveryPort_);
+			const std::string advertisedIp = localIpForRemote(senderAddr);
 
-			const std::string response = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
-			                             std::to_string(servicePort_);
+			std::string response = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
+			                       std::to_string(servicePort_);
+			if (!advertisedIp.empty()) {
+				response += "|" + advertisedIp;
+			}
 			sendto(socketFd,
 			       response.c_str(),
 			       static_cast<int>(response.size()),
@@ -333,18 +367,20 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::parseMessage(const std
 	                                                                    const std::string& senderIp) {
 	std::stringstream ss(payload);
 	std::string part;
-	std::array<std::string, 4> tokens;
-	std::size_t idx = 0;
-
-	while (std::getline(ss, part, '|') && idx < tokens.size()) {
-		tokens[idx++] = part;
+	std::vector<std::string> tokens;
+	tokens.reserve(5);
+	while (std::getline(ss, part, '|')) {
+		tokens.push_back(part);
+		if (tokens.size() > 5) {
+			return std::nullopt;
+		}
 	}
 
-	if (std::getline(ss, part, '|')) {
+	if (tokens.size() < 4 || tokens.size() > 5) {
 		return std::nullopt;
 	}
 
-	if (idx != 4 || tokens[0] != kResponsePrefix) {
+	if (tokens[0] != kResponsePrefix) {
 		return std::nullopt;
 	}
 
@@ -363,9 +399,14 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::parseMessage(const std
 		return std::nullopt;
 	}
 
+	std::string peerIp = senderIp;
+	if (tokens.size() == 5 && isValidIpv4(tokens[4]) && tokens[4] != "0.0.0.0") {
+		peerIp = tokens[4];
+	}
+
 	return PeerInfo{tokens[1],
 	                tokens[2],
-	                senderIp,
+	                peerIp,
 	                static_cast<std::uint16_t>(portValue),
 	                std::chrono::steady_clock::now()};
 }
