@@ -1,4 +1,19 @@
-# Build and Run
+# SyncFlow
+
+Cross-platform C++ file sync foundation with:
+
+- app lifecycle, config, logging
+- LAN discovery via UDP broadcast + unique device IDs
+- stable TCP handshake/heartbeat/retry channel
+- file monitoring and mirror sync
+- hashed metadata, sync planning, conflict policy hooks
+- chunked/resumable transfer primitives
+- authentication/token signing primitives
+- basic encrypted payload primitive
+- versioned local backup snapshots before overwrite/delete
+- unit/integration-style tests for protocol/auth/planner/transfer
+
+## Build and Run
 
 ## Build (Debug)
 
@@ -21,3 +36,15 @@ cmake --build build -j
 ```
 
 Keep `config.json` in the project root when running.
+
+## Test
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+## Important Production Notes
+
+- Replace the default `security_shared_secret` in `config.json`.
+- The current crypto/auth layer is lightweight and should be upgraded to a hardened cryptographic backend (e.g., TLS + modern AEAD) before Internet-facing use.
+- For large deployments, add persistent transfer/session state storage and richer integration tests (network fault injection, long-running churn tests, and cross-platform CI matrix).

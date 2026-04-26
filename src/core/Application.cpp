@@ -4,6 +4,8 @@
 #include "networking/DeviceDiscovery.h"
 #include "networking/TcpHandshake.h"
 
+#include "security/AuthManager.h"
+
 #include "sync_engine/SyncEngine.h"
 
 #include <atomic>
@@ -11,6 +13,7 @@
 #include <csignal>
 #include <iostream>
 #include <mutex>
+#include <random>
 #include <thread>
 #include <unordered_map>
 
@@ -38,6 +41,7 @@ bool Application::init() {
 	const std::string deviceName = config_.getString("device_name", "unknown-device");
 	const int configuredPort = config_.getInt("port", 8080);
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
+	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 
 	Logger::info("Application initialized");
 	Logger::info("app_name: " + appName);
@@ -46,6 +50,9 @@ bool Application::init() {
 	Logger::info("sync_folder: " + syncFolder);
 	Logger::info("log_level: " + logLevel);
 	Logger::info("mirror_folder: " + config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror"));
+	if (securitySecret == "change-me-in-production") {
+		Logger::warn("security_shared_secret is using default value; update it for production");
+	}
 
 	std::cout << "app_name: " << appName << '\n'
 	          << "device_name: " << deviceName << '\n'
@@ -69,6 +76,7 @@ int Application::run() {
 	int broadcastIntervalMs = config_.getInt("broadcast_interval_ms", 2000);
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
 	const std::string mirrorFolder = config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror");
+	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 	if (broadcastIntervalMs < 200) {
 		broadcastIntervalMs = 200;
 	}
@@ -77,6 +85,18 @@ int Application::run() {
 	Logger::info("Discovery is using broadcast probe routing and TCP verification");
 	Logger::info("Sync source folder: " + syncFolder);
 	Logger::info("Sync mirror folder: " + mirrorFolder);
+
+	const auto nowSeconds = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+		std::chrono::system_clock::now().time_since_epoch())
+			.count());
+	std::mt19937_64 rng(std::random_device{}());
+	syncflow::security::AuthManager auth(securitySecret, 120);
+	const auto startupToken = auth.issue(deviceName, nowSeconds, rng());
+	if (!auth.verify(startupToken, nowSeconds)) {
+		Logger::error("security self-check failed");
+		return 1;
+	}
+	Logger::info("security self-check passed");
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 	Logger::info("Local device_id: " + discovery.getDeviceId());
