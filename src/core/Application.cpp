@@ -4,6 +4,8 @@
 #include "networking/DeviceDiscovery.h"
 #include "networking/TcpHandshake.h"
 
+#include "sync_engine/SyncEngine.h"
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -43,6 +45,7 @@ bool Application::init() {
 	Logger::info("port: " + std::to_string(configuredPort));
 	Logger::info("sync_folder: " + syncFolder);
 	Logger::info("log_level: " + logLevel);
+	Logger::info("mirror_folder: " + config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror"));
 
 	std::cout << "app_name: " << appName << '\n'
 	          << "device_name: " << deviceName << '\n'
@@ -64,12 +67,16 @@ int Application::run() {
 	const std::string deviceName = config_.getString("device_name", "unknown-device");
 	const int configuredPort = config_.getInt("port", 8080);
 	int broadcastIntervalMs = config_.getInt("broadcast_interval_ms", 2000);
+	const std::string syncFolder = config_.getString("sync_folder", "./sync");
+	const std::string mirrorFolder = config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror");
 	if (broadcastIntervalMs < 200) {
 		broadcastIntervalMs = 200;
 	}
 	Logger::info("Configured port: " + std::to_string(configuredPort));
 	Logger::info("Broadcast interval (ms): " + std::to_string(broadcastIntervalMs));
 	Logger::info("Discovery is using broadcast probe routing and TCP verification");
+	Logger::info("Sync source folder: " + syncFolder);
+	Logger::info("Sync mirror folder: " + mirrorFolder);
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 	Logger::info("Local device_id: " + discovery.getDeviceId());
@@ -77,6 +84,11 @@ int Application::run() {
 	if (!tcp.start()) {
 		Logger::error("TCP handshake listener failed to start on port " + std::to_string(configuredPort));
 		return 1;
+	}
+
+	SyncEngine syncEngine(syncFolder, mirrorFolder);
+	if (!syncEngine.start()) {
+		Logger::warn("Sync engine failed to start; continuing without file mirroring");
 	}
 
 	g_keepRunning.store(true);
@@ -130,6 +142,15 @@ int Application::run() {
 		}
 	});
 
+	std::thread syncThread([&syncEngine]() {
+		while (g_keepRunning.load()) {
+			while (auto evt = syncEngine.pollEvent()) {
+				Logger::info(*evt);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(250));
+		}
+	});
+
 	std::thread cleanupThread([&discovery, &tcp, &knownDevicesMutex, &knownDevices]() {
 		while (g_keepRunning.load()) {
 			std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -162,7 +183,9 @@ int Application::run() {
 
 	senderThread.join();
 	listenerThread.join();
+	syncThread.join();
 	cleanupThread.join();
+	syncEngine.stop();
 	tcp.stop();
 	Logger::info("Discovery loop stopped");
 	return 0;
