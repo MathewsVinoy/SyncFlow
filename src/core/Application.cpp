@@ -101,9 +101,10 @@ int Application::run() {
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
 	Logger::info("Local device_id: " + discovery.getDeviceId());
 	TcpHandshake tcp(discovery.getDeviceId(), deviceName, static_cast<std::uint16_t>(configuredPort));
-	if (!tcp.start()) {
-		Logger::error("TCP handshake listener failed to start on port " + std::to_string(configuredPort));
-		return 1;
+	const bool tcpStarted = tcp.start();
+	if (!tcpStarted) {
+		Logger::warn("TCP handshake listener failed to start on port " + std::to_string(configuredPort) +
+		             "; continuing with local-only sync mode");
 	}
 
 	SyncEngine syncEngine(syncFolder, mirrorFolder);

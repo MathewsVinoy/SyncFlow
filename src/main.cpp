@@ -115,9 +115,7 @@ bool updateSyncPath(const std::string& newPath) {
 	}
 
 	root["sync_folder"] = absoluteSyncPath.string();
-	if (!root.contains("mirror_folder") || !root["mirror_folder"].is_string()) {
-		root["mirror_folder"] = (absoluteSyncPath / ".syncflow_mirror").string();
-	}
+	root["mirror_folder"] = (absoluteSyncPath / ".syncflow_mirror").string();
 
 	std::ofstream out(configPath, std::ios::trunc);
 	if (!out.is_open()) {

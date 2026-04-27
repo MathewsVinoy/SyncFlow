@@ -12,6 +12,7 @@
 namespace {
 std::shared_ptr<spdlog::logger> g_logger;
 std::mutex g_logger_mutex;
+bool g_sync_data_only = false;
 
 std::shared_ptr<spdlog::logger> ensureLogger(const std::string& folder) {
     std::lock_guard<std::mutex> lock(g_logger_mutex);
@@ -63,6 +64,11 @@ void Logger::setLevel(const std::string& level) {
     }
 }
 
+void Logger::setSyncDataOnly(bool syncOnly) {
+    std::lock_guard<std::mutex> lock(g_logger_mutex);
+    g_sync_data_only = syncOnly;
+}
+
 void Logger::shutdown() {
     std::lock_guard<std::mutex> lock(g_logger_mutex);
     if (!g_logger) {
@@ -94,6 +100,11 @@ void Logger::debug(const std::string& message) {
 void Logger::write(const std::string& level, const std::string& message) {
     const auto logger = ensureLogger("log");
 
+    // If sync-data-only mode is enabled, filter messages
+    if (g_sync_data_only && !shouldLog(message)) {
+        return;
+    }
+
     if (level == "info") {
         logger->info(message);
     } else if (level == "warn") {
@@ -104,3 +115,43 @@ void Logger::write(const std::string& level, const std::string& message) {
         logger->debug(message);
     }
 }
+
+bool Logger::shouldLog(const std::string& message) {
+    // Keywords that indicate sync data logs (show these)
+    const std::string syncKeywords[] = {
+        "sync ", "copy", "removed", "archive", "version", "sync_",
+        "Application initialized", "Application started"
+    };
+
+    // Keywords that indicate connection logs (hide these)
+    const std::string connectionKeywords[] = {
+        "Discovery", "TCP", "Device ", "Broadcast", "handshake", "listener",
+        "peer", "thread", "Thread", "probe", "announce", "RX", "TX"
+    };
+
+    // Check if message contains connection keywords (filter out)
+    for (const auto& keyword : connectionKeywords) {
+        if (message.find(keyword) != std::string::npos) {
+            return false;
+        }
+    }
+
+    // Check if message contains sync keywords (show)
+    for (const auto& keyword : syncKeywords) {
+        if (message.find(keyword) != std::string::npos) {
+            return true;
+        }
+    }
+
+    // Default: hide if it looks like operational/generic logs
+    if (message.find("initialized") != std::string::npos ||
+        message.find("started") != std::string::npos ||
+        message.find("stopped") != std::string::npos ||
+        message.find("shutting") != std::string::npos) {
+        return false;
+    }
+
+    // Show everything else by default (errors, warnings about sync issues)
+    return true;
+}
+

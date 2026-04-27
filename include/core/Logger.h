@@ -6,6 +6,7 @@ class Logger {
 public:
 	static void init(const std::string& folder = "log");
 	static void setLevel(const std::string& level);
+	static void setSyncDataOnly(bool syncOnly = true);
 	static void shutdown();
 	static void info(const std::string& message);
 	static void warn(const std::string& message);
@@ -14,4 +15,5 @@ public:
 
 private:
 	static void write(const std::string& level, const std::string& message);
+	static bool shouldLog(const std::string& message);
 };
