@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <sstream>
 #include <system_error>
 
@@ -23,6 +26,24 @@ bool copyFileContents(const std::filesystem::path& source, const std::filesystem
 
 	std::filesystem::copy_file(source, destination, std::filesystem::copy_options::overwrite_existing, ec);
 	return !ec;
+}
+
+std::string actionName(syncflow::engine::ActionType action) {
+	switch (action) {
+		case syncflow::engine::ActionType::Upload:
+			return "upload";
+		case syncflow::engine::ActionType::Download:
+			return "download";
+		case syncflow::engine::ActionType::DeleteRemote:
+			return "delete_remote";
+		case syncflow::engine::ActionType::DeleteLocal:
+			return "delete_local";
+		case syncflow::engine::ActionType::ConflictKeepBoth:
+			return "conflict_keep_both";
+		case syncflow::engine::ActionType::None:
+		default:
+			return "none";
+	}
 }
 }  // namespace
 
@@ -68,6 +89,7 @@ bool SyncEngine::start() {
 		running_ = true;
 		loopThread_ = std::thread([this]() { runLoop(); });
 	}
+	transferDispatchThread_ = std::thread([this]() { dispatchTransferLoop(); });
 
 	recordEvent("sync engine started: source=" + sourceFolder_.string() + " mirror=" + mirrorFolder_.string());
 	return true;
@@ -84,6 +106,10 @@ void SyncEngine::stop() {
 
 	if (loopThread_.joinable()) {
 		loopThread_.join();
+	}
+	transferCv_.notify_all();
+	if (transferDispatchThread_.joinable()) {
+		transferDispatchThread_.join();
 	}
 	workers_.stop();
 	recordEvent("sync engine stopped");
@@ -138,6 +164,79 @@ std::vector<syncflow::engine::SyncAction> SyncEngine::planAgainstRemote(
 	return planner.plan(localMetadata(localDeviceId), remote);
 }
 
+void SyncEngine::evaluateRemoteMetadata(
+	const std::string& remoteDeviceId,
+	const std::unordered_map<std::string, syncflow::engine::FileMetadata>& remote,
+	const std::string& localDeviceId) {
+	const std::string digest = buildRemoteDigest(remote);
+	{
+		std::lock_guard<std::mutex> lock(transferMutex_);
+		auto it = remoteMetadataDigests_.find(remoteDeviceId);
+		if (it != remoteMetadataDigests_.end() && it->second == digest) {
+			Logger::debug("sync remote metadata skipped duplicate: device=" + remoteDeviceId);
+			return;
+		}
+		remoteMetadataDigests_[remoteDeviceId] = digest;
+	}
+
+	auto actions = planAgainstRemote(remote, localDeviceId);
+	const auto nowUnix = std::chrono::duration_cast<std::chrono::seconds>(
+		std::chrono::system_clock::now().time_since_epoch())
+		                     .count();
+
+	for (const auto& action : actions) {
+		if (action.type == syncflow::engine::ActionType::None) {
+			continue;
+		}
+
+		Logger::info("sync decision: device=" + remoteDeviceId + " action=" + actionName(action.type) +
+		             " path=" + action.relativePath + " reason=" + action.reason);
+
+		if ((action.type == syncflow::engine::ActionType::Upload ||
+		     action.type == syncflow::engine::ActionType::DeleteRemote) &&
+		    isRecentlyChangedLocally(action.relativePath)) {
+			Logger::debug("sync loop-prevention skip: device=" + remoteDeviceId + " path=" + action.relativePath);
+			continue;
+		}
+
+		if (action.type == syncflow::engine::ActionType::ConflictKeepBoth) {
+			resolveConflictKeepBoth(action.relativePath, localDeviceId);
+			TransferTask conflictDownload;
+			conflictDownload.action = syncflow::engine::ActionType::Download;
+			conflictDownload.remoteDeviceId = remoteDeviceId;
+			conflictDownload.relativePath = action.relativePath;
+			conflictDownload.reason = "conflict resolved via local rename, download remote";
+			conflictDownload.decidedUnixSeconds = nowUnix;
+			(void)enqueueTransferTask(conflictDownload);
+			continue;
+		}
+
+		TransferTask task;
+		task.action = action.type;
+		task.remoteDeviceId = remoteDeviceId;
+		task.relativePath = action.relativePath;
+		task.reason = action.reason;
+		task.decidedUnixSeconds = nowUnix;
+		(void)enqueueTransferTask(task);
+	}
+}
+
+void SyncEngine::setTransferHandler(TransferHandler handler) {
+	std::lock_guard<std::mutex> lock(transferMutex_);
+	transferHandler_ = std::move(handler);
+}
+
+std::optional<SyncEngine::TransferTask> SyncEngine::pollTransferTask() {
+	std::lock_guard<std::mutex> lock(transferMutex_);
+	if (transferQueue_.empty()) {
+		return std::nullopt;
+	}
+	auto task = transferQueue_.front();
+	transferQueue_.pop_front();
+	queuedTransferKeys_.erase(task.remoteDeviceId + "|" + task.relativePath + "|" + actionName(task.action));
+	return task;
+}
+
 void SyncEngine::runLoop() {
 	while (true) {
 		{
@@ -149,6 +248,46 @@ void SyncEngine::runLoop() {
 
 		scanAndSync();
 		std::this_thread::sleep_for(interval_);
+	}
+}
+
+void SyncEngine::dispatchTransferLoop() {
+	for (;;) {
+		TransferTask task;
+		TransferHandler handler;
+		{
+			std::unique_lock<std::mutex> lock(transferMutex_);
+			transferCv_.wait(lock, [this]() {
+				std::lock_guard<std::mutex> stateLock(stateMutex_);
+				return !transferQueue_.empty() || !running_;
+			});
+
+			if (transferQueue_.empty()) {
+				std::lock_guard<std::mutex> stateLock(stateMutex_);
+				if (!running_) {
+					return;
+				}
+				continue;
+			}
+
+			task = transferQueue_.front();
+			transferQueue_.pop_front();
+			queuedTransferKeys_.erase(task.remoteDeviceId + "|" + task.relativePath + "|" + actionName(task.action));
+			handler = transferHandler_;
+		}
+
+		if (!handler) {
+			recordEvent("transfer queued (no handler): " + actionName(task.action) + " " + task.relativePath +
+			            " -> " + task.remoteDeviceId);
+			continue;
+		}
+
+		try {
+			handler(task);
+		} catch (...) {
+			Logger::error("transfer handler threw exception: action=" + actionName(task.action) + " path=" +
+			              task.relativePath + " device=" + task.remoteDeviceId);
+		}
 	}
 }
 
@@ -174,6 +313,7 @@ void SyncEngine::scanAndSync() {
 		if (!isNew) {
 			archiveVersionIfExists(destination, relString);
 		}
+		markRecentLocalChange(relString);
 		copyFileAsync(source, destination);
 		recordEvent(std::string(isNew ? "file created: " : "file updated: ") + relString);
 		Logger::info("sync copy scheduled: " + source.string() + " -> " + destination.string());
@@ -182,6 +322,7 @@ void SyncEngine::scanAndSync() {
 	for (const auto& [relString, deletedEntry] : previous) {
 		if (snapshot.find(relString) == snapshot.end()) {
 			const auto destination = mirrorFolder_ / std::filesystem::path(relString);
+			markRecentLocalChange(relString);
 			archiveVersionIfExists(destination, relString);
 			std::error_code ec;
 			std::filesystem::remove(destination, ec);
@@ -206,6 +347,95 @@ void SyncEngine::recordEvent(const std::string& event) {
 	if (events_.size() > 256) {
 		events_.pop_front();
 	}
+}
+
+void SyncEngine::markRecentLocalChange(const std::string& relativePath) {
+	std::lock_guard<std::mutex> lock(stateMutex_);
+	const auto now = std::chrono::steady_clock::now();
+	if (recentLocalChanges_.size() > 8192) {
+		for (auto it = recentLocalChanges_.begin(); it != recentLocalChanges_.end();) {
+			if ((now - it->second) > (loopPreventionWindow_ * 4)) {
+				it = recentLocalChanges_.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+	recentLocalChanges_[relativePath] = std::chrono::steady_clock::now();
+}
+
+bool SyncEngine::isRecentlyChangedLocally(const std::string& relativePath) const {
+	std::lock_guard<std::mutex> lock(stateMutex_);
+	auto it = recentLocalChanges_.find(relativePath);
+	if (it == recentLocalChanges_.end()) {
+		return false;
+	}
+	return (std::chrono::steady_clock::now() - it->second) <= loopPreventionWindow_;
+}
+
+bool SyncEngine::enqueueTransferTask(const TransferTask& task) {
+	const std::string key = task.remoteDeviceId + "|" + task.relativePath + "|" + actionName(task.action);
+	std::lock_guard<std::mutex> lock(transferMutex_);
+	if (queuedTransferKeys_.find(key) != queuedTransferKeys_.end()) {
+		return false;
+	}
+
+	if (transferQueue_.size() >= transferQueueMaxSize_) {
+		const auto dropped = transferQueue_.front();
+		queuedTransferKeys_.erase(dropped.remoteDeviceId + "|" + dropped.relativePath + "|" +
+		                        actionName(dropped.action));
+		transferQueue_.pop_front();
+		Logger::warn("transfer queue full; dropping oldest task");
+	}
+
+	transferQueue_.push_back(task);
+	queuedTransferKeys_.insert(key);
+	transferCv_.notify_one();
+	return true;
+}
+
+void SyncEngine::resolveConflictKeepBoth(const std::string& relativePath, const std::string& localDeviceId) {
+	const auto original = sourceFolder_ / std::filesystem::path(relativePath);
+	if (!std::filesystem::exists(original)) {
+		return;
+	}
+
+	const auto now = std::chrono::system_clock::now();
+	const auto unixSeconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+	const auto conflictPath = sourceFolder_ /
+		(std::filesystem::path(relativePath).string() + ".conflict." + localDeviceId + "." +
+		 std::to_string(unixSeconds));
+
+	std::error_code ec;
+	std::filesystem::create_directories(conflictPath.parent_path(), ec);
+	ec.clear();
+	std::filesystem::rename(original, conflictPath, ec);
+	if (ec) {
+		Logger::warn("sync conflict rename failed: " + original.string() + " -> " + conflictPath.string());
+		return;
+	}
+
+	markRecentLocalChange(relativePath);
+	Logger::warn("sync conflict resolved by keep-both rename: " + original.string() + " -> " +
+	             conflictPath.string());
+	recordEvent("sync conflict keep-both: " + relativePath);
+}
+
+std::string SyncEngine::buildRemoteDigest(
+	const std::unordered_map<std::string, syncflow::engine::FileMetadata>& remote) const {
+	std::vector<std::string> lines;
+	lines.reserve(remote.size());
+	for (const auto& [path, meta] : remote) {
+		lines.push_back(path + "|" + std::to_string(meta.size) + "|" + std::to_string(meta.modifiedUnixSeconds) +
+		                "|" + meta.hash + "|" + (meta.deleted ? "1" : "0"));
+	}
+	std::sort(lines.begin(), lines.end());
+	std::string digest;
+	for (const auto& line : lines) {
+		digest += line;
+		digest.push_back('\n');
+	}
+	return digest;
 }
 
 void SyncEngine::copyFileAsync(const std::filesystem::path& source, const std::filesystem::path& destination) {
