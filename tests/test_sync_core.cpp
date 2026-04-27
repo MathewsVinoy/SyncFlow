@@ -125,6 +125,8 @@ int runTransferTest() {
 
 }  // namespace
 
+int runRemoteSyncTest();
+
 int main() {
 	if (runProtocolRoundtripTest() != 0) {
 		std::cerr << "protocol test failed\n";
@@ -186,7 +188,7 @@ int runRemoteSyncTest() {
 	bool hasDownloadFile2 = false;
 	for (const auto& p : plan) {
 		if (p.remotePath == "file2.txt" && 
-		    p.action == syncflow::engine::SyncAction::DownloadFile) {
+		    p.action == syncflow::engine::RemoteSyncAction::DownloadFile) {
 			hasDownloadFile2 = true;
 			break;
 		}

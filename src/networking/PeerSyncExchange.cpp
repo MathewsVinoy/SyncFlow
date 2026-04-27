@@ -109,13 +109,13 @@ bool PeerSyncExchange::applySync(
 	using namespace syncflow::engine;
 	
 	switch (plan.action) {
-		case SyncAction::CreateLocalDir: {
+		case RemoteSyncAction::CreateLocalDir: {
 			std::filesystem::create_directories(syncFolder_ / plan.localPath);
 			Logger::info("sync created local dir: " + plan.localPath);
 			return true;
 		}
 		
-		case SyncAction::DownloadFile: {
+		case RemoteSyncAction::DownloadFile: {
 			auto targetPath = syncFolder_ / plan.localPath;
 			std::filesystem::create_directories(targetPath.parent_path());
 			
@@ -132,7 +132,7 @@ bool PeerSyncExchange::applySync(
 			return true;
 		}
 		
-		case SyncAction::DeleteLocal: {
+		case RemoteSyncAction::DeleteLocal: {
 			try {
 				std::filesystem::remove(syncFolder_ / plan.localPath);
 				Logger::info("sync deleted local: " + plan.localPath);
