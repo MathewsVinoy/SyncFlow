@@ -228,6 +228,7 @@ void TcpHandshake::stop() {
 		}
 	}
 	states_.clear();
+	messages_.clear();
 
 	if (listenSocket_ != static_cast<std::intptr_t>(kInvalidSocket)) {
 		closeSocket(static_cast<SocketHandle>(listenSocket_));
@@ -269,6 +270,22 @@ void TcpHandshake::removePeer(const std::string& deviceId) {
 	pushEventLocked("TCP peer removed: id=" + deviceId);
 }
 
+bool TcpHandshake::sendMessage(const std::string& deviceId, const std::string& payload) {
+	if (!isValidAppPayload(payload)) {
+		return false;
+	}
+
+	std::lock_guard<std::mutex> lock(stateMutex_);
+	auto it = states_.find(deviceId);
+	if (it == states_.end() || !it->second.connected ||
+	    it->second.socket == static_cast<std::intptr_t>(kInvalidSocket)) {
+		return false;
+	}
+
+	SocketHandle fd = static_cast<SocketHandle>(it->second.socket);
+	return sendAll(fd, std::string("MSG|") + payload + "\n");
+}
+
 void TcpHandshake::tick() {
 	std::lock_guard<std::mutex> lock(stateMutex_);
 	if (!running_) {
@@ -286,6 +303,16 @@ std::optional<std::string> TcpHandshake::pollEvent() {
 	std::string e = events_.front();
 	events_.pop_front();
 	return e;
+}
+
+std::optional<TcpHandshake::InboundMessage> TcpHandshake::pollMessage() {
+	std::lock_guard<std::mutex> lock(stateMutex_);
+	if (messages_.empty()) {
+		return std::nullopt;
+	}
+	InboundMessage m = std::move(messages_.front());
+	messages_.pop_front();
+	return m;
 }
 
 std::vector<TcpHandshake::RemoteDevice> TcpHandshake::getConnectedPeers() const {
@@ -519,6 +546,19 @@ bool TcpHandshake::processIncomingLinesLocked(ConnectionState& st) {
 			st.readBuffer.erase(0, nl + 1);
 
 			if (!isValidControlLine(line)) {
+				if (line.rfind("MSG|", 0) == 0) {
+					std::string payload = line.substr(4);
+					if (!isValidAppPayload(payload)) {
+						pushEventLocked("TCP invalid app payload ignored: id=" + st.remote.deviceId);
+						return false;
+					}
+					messages_.push_back(InboundMessage{st.remote.deviceId, std::move(payload)});
+					if (messages_.size() > 300) {
+						messages_.pop_front();
+					}
+					continue;
+				}
+
 				pushEventLocked("TCP invalid message ignored: id=" + st.remote.deviceId);
 				return false;
 			}
@@ -563,6 +603,13 @@ std::string TcpHandshake::buildHello(const std::string& id, const std::string& n
 
 bool TcpHandshake::isValidControlLine(const std::string& text) {
 	return text == "PING" || text == "PONG";
+}
+
+bool TcpHandshake::isValidAppPayload(const std::string& payload) {
+	if (payload.empty() || payload.size() > 3500) {
+		return false;
+	}
+	return payload.find('\n') == std::string::npos && payload.find('\r') == std::string::npos;
 }
 
 bool TcpHandshake::shouldInitiate(const std::string& localId, const std::string& remoteId) {

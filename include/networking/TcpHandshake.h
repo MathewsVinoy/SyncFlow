@@ -19,6 +19,11 @@ public:
 		std::uint16_t port;
 	};
 
+	struct InboundMessage {
+		std::string deviceId;
+		std::string payload;
+	};
+
 	TcpHandshake(std::string localDeviceId, std::string localDeviceName, std::uint16_t listenPort);
 	~TcpHandshake();
 
@@ -28,8 +33,10 @@ public:
 
 	void observePeer(const RemoteDevice& peer);
 	void removePeer(const std::string& deviceId);
+	bool sendMessage(const std::string& deviceId, const std::string& payload);
 
 	std::optional<std::string> pollEvent();
+	std::optional<InboundMessage> pollMessage();
 	std::vector<RemoteDevice> getConnectedPeers() const;
 
 private:
@@ -53,6 +60,7 @@ private:
 	mutable std::mutex stateMutex_;
 	std::unordered_map<std::string, ConnectionState> states_;
 	std::deque<std::string> events_;
+	std::deque<InboundMessage> messages_;
 
 	void pushEventLocked(const std::string& event);
 	void acceptIncoming();
@@ -65,6 +73,7 @@ private:
 	static bool isValidDeviceName(const std::string& value);
 	static std::string buildHello(const std::string& id, const std::string& name);
 	static bool isValidControlLine(const std::string& text);
+	static bool isValidAppPayload(const std::string& payload);
 	static bool shouldInitiate(const std::string& localId, const std::string& remoteId);
 	static std::optional<RemoteDevice> parseHello(const std::string& text, const std::string& ip, std::uint16_t port);
 };
