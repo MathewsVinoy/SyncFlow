@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -31,95 +32,143 @@ void handleStopSignal(int) {
 	g_keepRunning.store(false);
 }
 
-std::string hexEncode(const std::string& input) {
-	static constexpr char kHex[] = "0123456789abcdef";
-	std::string out;
-	out.reserve(input.size() * 2);
-	for (unsigned char c : input) {
-		out.push_back(kHex[(c >> 4) & 0x0F]);
-		out.push_back(kHex[c & 0x0F]);
-	}
-	return out;
-}
+struct BasicFileMetadata {
+	std::uint64_t size = 0;
+	std::uint64_t modifiedMs = 0;
+};
 
-std::string hexEncodeBytes(const std::vector<char>& input) {
-	static constexpr char kHex[] = "0123456789abcdef";
-	std::string out;
-	out.reserve(input.size() * 2);
-	for (unsigned char c : input) {
-		out.push_back(kHex[(c >> 4) & 0x0F]);
-		out.push_back(kHex[c & 0x0F]);
-	}
-	return out;
-}
+using MetadataSnapshot = std::map<std::string, BasicFileMetadata>;
 
-int fromHexNibble(char c) {
-	if (c >= '0' && c <= '9') {
-		return c - '0';
-	}
-	if (c >= 'a' && c <= 'f') {
-		return 10 + (c - 'a');
-	}
-	if (c >= 'A' && c <= 'F') {
-		return 10 + (c - 'A');
-	}
-	return -1;
-}
-
-std::optional<std::string> hexDecodeToString(const std::string& input) {
-	if (input.size() % 2 != 0) {
-		return std::nullopt;
-	}
-	std::string out;
-	out.reserve(input.size() / 2);
-	for (std::size_t i = 0; i < input.size(); i += 2) {
-		int hi = fromHexNibble(input[i]);
-		int lo = fromHexNibble(input[i + 1]);
-		if (hi < 0 || lo < 0) {
+std::optional<std::uint64_t> parseUnsigned64(const std::string& value) {
+	try {
+		std::size_t idx = 0;
+		auto parsed = std::stoull(value, &idx);
+		if (idx != value.size()) {
 			return std::nullopt;
 		}
-		out.push_back(static_cast<char>((hi << 4) | lo));
-	}
-	return out;
-}
-
-std::optional<std::vector<char>> hexDecodeToBytes(const std::string& input) {
-	if (input.size() % 2 != 0) {
+		return static_cast<std::uint64_t>(parsed);
+	} catch (...) {
 		return std::nullopt;
 	}
-	std::vector<char> out;
-	out.reserve(input.size() / 2);
-	for (std::size_t i = 0; i < input.size(); i += 2) {
-		int hi = fromHexNibble(input[i]);
-		int lo = fromHexNibble(input[i + 1]);
-		if (hi < 0 || lo < 0) {
-			return std::nullopt;
+}
+
+MetadataSnapshot buildLocalSnapshot(const std::filesystem::path& syncFolder, syncflow::engine::RemoteSync& remoteSync) {
+	MetadataSnapshot snapshot;
+	for (const auto& file : remoteSync.getLocalFileMetadata(syncFolder)) {
+		if (file.isDirectory) {
+			continue;
 		}
-		out.push_back(static_cast<char>((hi << 4) | lo));
+		snapshot[file.path] = BasicFileMetadata{file.size, file.lastModifiedTime};
 	}
-	return out;
+	return snapshot;
 }
 
-std::vector<std::string> splitPipe(const std::string& text) {
-	std::vector<std::string> parts;
-	std::stringstream ss(text);
-	std::string part;
-	while (std::getline(ss, part, '|')) {
-		parts.push_back(part);
+std::string serializeSnapshot(const MetadataSnapshot& snapshot) {
+	std::string entries;
+	for (auto it = snapshot.begin(); it != snapshot.end(); ++it) {
+		const auto& [path, meta] = *it;
+		if (path.find('|') != std::string::npos || path.find(',') != std::string::npos) {
+			continue;
+		}
+		if (!entries.empty()) {
+			entries.push_back(',');
+		}
+		entries += path + ":" + std::to_string(meta.size) + ":" + std::to_string(meta.modifiedMs);
 	}
-	return parts;
+	return entries;
 }
 
-bool isSafeRelativePath(const std::filesystem::path& rel) {
-	if (rel.empty() || rel.is_absolute()) {
+std::string buildFilesMessage(const std::string& deviceId, const MetadataSnapshot& snapshot) {
+	return "FILES|" + deviceId + "|" + serializeSnapshot(snapshot);
+}
+
+bool parseFilesMessage(const std::string& payload,
+	                   std::string& deviceId,
+	                   MetadataSnapshot& parsedSnapshot,
+	                   std::string& entriesDigest) {
+	if (payload.rfind("FILES|", 0) != 0) {
 		return false;
 	}
-	for (const auto& item : rel) {
-		if (item == "..") {
-			return false;
+
+	const std::size_t firstPipe = payload.find('|');
+	if (firstPipe == std::string::npos) {
+		return false;
+	}
+	const std::size_t secondPipe = payload.find('|', firstPipe + 1);
+	if (secondPipe == std::string::npos) {
+		return false;
+	}
+
+	deviceId = payload.substr(firstPipe + 1, secondPipe - (firstPipe + 1));
+	if (deviceId.empty()) {
+		return false;
+	}
+
+	entriesDigest = payload.substr(secondPipe + 1);
+	parsedSnapshot.clear();
+	std::stringstream ss(entriesDigest);
+	std::string token;
+	while (std::getline(ss, token, ',')) {
+		if (token.empty()) {
+			continue;
+		}
+
+		const std::size_t lastColon = token.rfind(':');
+		if (lastColon == std::string::npos) {
+			continue;
+		}
+		const std::size_t secondLastColon = token.rfind(':', lastColon - 1);
+		if (secondLastColon == std::string::npos) {
+			continue;
+		}
+
+		const std::string path = token.substr(0, secondLastColon);
+		if (path.empty()) {
+			continue;
+		}
+
+		auto size = parseUnsigned64(token.substr(secondLastColon + 1, lastColon - secondLastColon - 1));
+		auto modified = parseUnsigned64(token.substr(lastColon + 1));
+		if (!size.has_value() || !modified.has_value()) {
+			continue;
+		}
+
+		parsedSnapshot[path] = BasicFileMetadata{*size, *modified};
+	}
+
+	return true;
+}
+
+void logSyncDecisions(const std::string& remoteDeviceId,
+	                  const MetadataSnapshot& localSnapshot,
+	                  const MetadataSnapshot& remoteSnapshot) {
+	for (const auto& [path, local] : localSnapshot) {
+		auto it = remoteSnapshot.find(path);
+		if (it == remoteSnapshot.end()) {
+			Logger::info("sync decision [upload missing]: " + path + " -> " + remoteDeviceId);
+			continue;
+		}
+
+		const auto& remote = it->second;
+		if (local.size == remote.size && local.modifiedMs == remote.modifiedMs) {
+			continue;
+		}
+
+		if (local.modifiedMs > remote.modifiedMs) {
+			Logger::info("sync decision [upload updated]: " + path + " -> " + remoteDeviceId);
+		} else if (remote.modifiedMs > local.modifiedMs) {
+			Logger::info("sync decision [download updated]: " + path + " <- " + remoteDeviceId);
+		} else {
+			Logger::info("sync decision [update conflict-size]: " + path + " <-> " + remoteDeviceId);
 		}
 	}
-	return true;
+
+	for (const auto& [path, remote] : remoteSnapshot) {
+		(void)remote;
+		if (localSnapshot.find(path) == localSnapshot.end()) {
+			Logger::info("sync decision [download missing]: " + path + " <- " + remoteDeviceId);
+		}
+	}
 }
 }  // namespace
 
@@ -199,8 +248,9 @@ int Application::run() {
 	Logger::info("security self-check passed");
 
 	DeviceDiscovery discovery(deviceName, static_cast<std::uint16_t>(configuredPort));
-	Logger::info("Local device_id: " + discovery.getDeviceId());
-	TcpHandshake tcp(discovery.getDeviceId(), deviceName, static_cast<std::uint16_t>(configuredPort));
+	const std::string localDeviceId = discovery.getDeviceId();
+	Logger::info("Local device_id: " + localDeviceId);
+	TcpHandshake tcp(localDeviceId, deviceName, static_cast<std::uint16_t>(configuredPort));
 	const bool tcpStarted = tcp.start();
 	if (!tcpStarted) {
 		Logger::warn("TCP handshake listener failed to start on port " + std::to_string(configuredPort) +
@@ -213,54 +263,9 @@ int Application::run() {
 	}
 
 	syncflow::engine::RemoteSync remoteSync;
-	std::mutex pendingMutex;
-	std::unordered_map<std::string, std::vector<char>> pendingFileBuffers;
-	std::unordered_map<std::string, std::uint64_t> pendingFileTimestamps;
-
-	auto sendLocalFileToPeer = [&](const std::string& peerId, const std::string& relativePath) {
-		const std::filesystem::path relPath(relativePath);
-		if (!isSafeRelativePath(relPath)) {
-			return;
-		}
-
-		const auto fullPath = std::filesystem::path(syncFolder) / relPath;
-		if (!std::filesystem::exists(fullPath) || !std::filesystem::is_regular_file(fullPath)) {
-			return;
-		}
-
-		std::ifstream in(fullPath, std::ios::binary);
-		if (!in.is_open()) {
-			Logger::warn("sync send skipped, cannot open: " + fullPath.string());
-			return;
-		}
-
-		std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-		auto fileInfo = remoteSync.getFileInfo(fullPath);
-		const std::uint64_t ts = fileInfo.lastModifiedTime;
-
-		constexpr std::size_t kChunkBytes = 512;
-		std::size_t offset = 0;
-		const std::string encodedPath = hexEncode(relativePath);
-		while (offset < data.size()) {
-			const std::size_t n = std::min(kChunkBytes, data.size() - offset);
-			std::vector<char> chunk(data.begin() + static_cast<std::ptrdiff_t>(offset),
-			                       data.begin() + static_cast<std::ptrdiff_t>(offset + n));
-			const bool isFinal = (offset + n) >= data.size();
-			const std::string payload = "SYNC_FILE_CHUNK|" + encodedPath + "|" + std::to_string(ts) + "|" +
-			                            std::to_string(offset) + "|" + (isFinal ? "1" : "0") + "|" +
-			                            hexEncodeBytes(chunk);
-			if (!tcp.sendMessage(peerId, payload)) {
-				Logger::warn("sync send chunk failed: peer=" + peerId + " file=" + relativePath);
-				return;
-			}
-			offset += n;
-		}
-		if (data.empty()) {
-			const std::string payload = "SYNC_FILE_CHUNK|" + encodedPath + "|" + std::to_string(ts) + "|0|1|";
-			tcp.sendMessage(peerId, payload);
-		}
-		Logger::info("sync pushed file to peer: " + relativePath + " -> " + peerId);
-	};
+	std::mutex remoteMetadataMutex;
+	std::unordered_map<std::string, MetadataSnapshot> remoteMetadataByDevice;
+	std::unordered_map<std::string, std::string> lastRemoteMetadataDigest;
 
 	g_keepRunning.store(true);
 	std::signal(SIGINT, handleStopSignal);
@@ -286,12 +291,15 @@ int Application::run() {
 	                           &knownDevicesMutex,
 	                           &knownDevices,
 	                           &remoteSync,
-	                           &pendingMutex,
-	                           &pendingFileBuffers,
-	                           &pendingFileTimestamps,
-	                           &sendLocalFileToPeer,
+	                           &remoteMetadataMutex,
+	                           &remoteMetadataByDevice,
+	                           &lastRemoteMetadataDigest,
+	                           &localDeviceId,
 	                           &syncFolder]() {
-		auto nextMetaRequest = std::chrono::steady_clock::now();
+		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
+		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+		std::string lastLocalPayload;
+
 		while (g_keepRunning.load()) {
 			tcp.tick();
 			while (auto evt = tcp.pollEvent()) {
@@ -302,117 +310,56 @@ int Application::run() {
 				const std::string& peerId = inbound->deviceId;
 				const std::string& msg = inbound->payload;
 
-				if (msg == "SYNC_META_REQ") {
-					auto localMeta = remoteSync.getLocalFileMetadata(std::filesystem::path(syncFolder));
-					const std::string payload = "SYNC_META|" + remoteSync.encodeMetadataList(localMeta);
-					(void)tcp.sendMessage(peerId, payload);
+				std::string messageDeviceId;
+				MetadataSnapshot remoteSnapshot;
+				std::string digest;
+				if (!parseFilesMessage(msg, messageDeviceId, remoteSnapshot, digest)) {
+					Logger::warn("metadata message ignored (malformed envelope): from=" + peerId);
 					continue;
 				}
 
-				if (msg.rfind("SYNC_META|", 0) == 0) {
-					const std::string encodedMeta = msg.substr(std::string("SYNC_META|").size());
-					auto remoteMeta = remoteSync.decodeMetadataList(encodedMeta);
-					auto localMeta = remoteSync.getLocalFileMetadata(std::filesystem::path(syncFolder));
-					auto plans = remoteSync.compareMeta(localMeta, remoteMeta, std::filesystem::path(syncFolder));
-
-					for (const auto& p : plans) {
-						if (p.action == syncflow::engine::RemoteSyncAction::DownloadFile) {
-							const std::string req = "SYNC_FILE_REQ|" + hexEncode(p.remotePath);
-							(void)tcp.sendMessage(peerId, req);
-						} else if (p.action == syncflow::engine::RemoteSyncAction::UploadFile) {
-							sendLocalFileToPeer(peerId, p.localPath);
-						}
-					}
+				if (messageDeviceId != peerId) {
+					Logger::warn("metadata message ignored (device mismatch): from=" + peerId + " claims=" +
+					             messageDeviceId);
 					continue;
 				}
 
-				if (msg.rfind("SYNC_FILE_REQ|", 0) == 0) {
-					auto decodedPath = hexDecodeToString(msg.substr(std::string("SYNC_FILE_REQ|").size()));
-					if (!decodedPath.has_value()) {
-						continue;
+				bool duplicate = false;
+				{
+					std::lock_guard<std::mutex> lock(remoteMetadataMutex);
+					auto it = lastRemoteMetadataDigest.find(peerId);
+					if (it != lastRemoteMetadataDigest.end() && it->second == digest) {
+						duplicate = true;
+					} else {
+						lastRemoteMetadataDigest[peerId] = digest;
+						remoteMetadataByDevice[peerId] = remoteSnapshot;
 					}
-					sendLocalFileToPeer(peerId, *decodedPath);
+				}
+
+				if (duplicate) {
 					continue;
 				}
 
-				if (msg.rfind("SYNC_FILE_CHUNK|", 0) == 0) {
-					auto parts = splitPipe(msg);
-					if (parts.size() != 6) {
-						continue;
-					}
-					auto decodedPath = hexDecodeToString(parts[1]);
-					auto decodedBytes = hexDecodeToBytes(parts[5]);
-					if (!decodedPath.has_value() || !decodedBytes.has_value()) {
-						continue;
-					}
-
-					const std::filesystem::path relPath(*decodedPath);
-					if (!isSafeRelativePath(relPath)) {
-						continue;
-					}
-
-					const std::uint64_t incomingTs = static_cast<std::uint64_t>(std::stoull(parts[2]));
-					const std::size_t offset = static_cast<std::size_t>(std::stoull(parts[3]));
-					const bool isFinal = parts[4] == "1";
-					const std::string key = peerId + "|" + *decodedPath;
-
-					bool finalizeNow = false;
-					{
-						std::lock_guard<std::mutex> lock(pendingMutex);
-						auto& buffer = pendingFileBuffers[key];
-						if (offset != buffer.size()) {
-							buffer.clear();
-							pendingFileTimestamps[key] = incomingTs;
-						}
-						buffer.insert(buffer.end(), decodedBytes->begin(), decodedBytes->end());
-						pendingFileTimestamps[key] = incomingTs;
-						finalizeNow = isFinal;
-					}
-
-					if (finalizeNow) {
-						std::vector<char> allData;
-						std::uint64_t ts = 0;
-						{
-							std::lock_guard<std::mutex> lock(pendingMutex);
-							allData = std::move(pendingFileBuffers[key]);
-							ts = pendingFileTimestamps[key];
-							pendingFileBuffers.erase(key);
-							pendingFileTimestamps.erase(key);
-						}
-
-						auto target = std::filesystem::path(syncFolder) / relPath;
-						std::error_code ec;
-						std::filesystem::create_directories(target.parent_path(), ec);
-						if (!ec) {
-							bool shouldWrite = true;
-							if (std::filesystem::exists(target, ec) && !ec) {
-								auto localInfo = remoteSync.getFileInfo(target);
-								if (localInfo.lastModifiedTime >= ts) {
-									shouldWrite = false;
-								}
-							}
-
-							if (shouldWrite) {
-								std::ofstream out(target, std::ios::binary | std::ios::trunc);
-								if (out.is_open()) {
-									out.write(allData.data(), static_cast<std::streamsize>(allData.size()));
-									out.close();
-									Logger::info("sync received from peer: " + relPath.string() + " <- " + peerId);
-								}
-							}
-						}
-					}
-					continue;
-				}
+				auto localSnapshot = buildLocalSnapshot(std::filesystem::path(syncFolder), remoteSync);
+				logSyncDecisions(peerId, localSnapshot, remoteSnapshot);
 			}
 
 			const auto now = std::chrono::steady_clock::now();
-			if (now >= nextMetaRequest) {
-				auto peers = tcp.getConnectedPeers();
-				for (const auto& peer : peers) {
-					(void)tcp.sendMessage(peer.deviceId, "SYNC_META_REQ");
+			if (now >= nextMetadataBroadcast) {
+				auto localSnapshot = buildLocalSnapshot(std::filesystem::path(syncFolder), remoteSync);
+				const std::string payload = buildFilesMessage(localDeviceId, localSnapshot);
+				const bool changed = payload != lastLocalPayload;
+
+				if (changed || now >= nextForcedMetadataBroadcast) {
+					auto peers = tcp.getConnectedPeers();
+					for (const auto& peer : peers) {
+						(void)tcp.sendMessage(peer.deviceId, payload);
+					}
+					lastLocalPayload = payload;
+					nextForcedMetadataBroadcast = now + std::chrono::seconds(15);
 				}
-				nextMetaRequest = now + std::chrono::seconds(4);
+
+				nextMetadataBroadcast = now + std::chrono::seconds(3);
 			}
 
 			auto peer = discovery.receiver(800);
@@ -449,7 +396,13 @@ int Application::run() {
 		}
 	});
 
-	std::thread cleanupThread([&discovery, &tcp, &knownDevicesMutex, &knownDevices]() {
+	std::thread cleanupThread([&discovery,
+	                         &tcp,
+	                         &knownDevicesMutex,
+	                         &knownDevices,
+	                         &remoteMetadataMutex,
+	                         &remoteMetadataByDevice,
+	                         &lastRemoteMetadataDigest]() {
 		while (g_keepRunning.load()) {
 			std::this_thread::sleep_for(std::chrono::seconds(1));
 			auto active = discovery.getActiveDevices(15000);
@@ -474,6 +427,11 @@ int Application::run() {
 			for (const auto& peer : removedPeers) {
 				Logger::info("Device removed: id=" + peer.deviceId + " name=" + peer.deviceName +
 				             " ip=" + peer.ip + " port=" + std::to_string(peer.port));
+				{
+					std::lock_guard<std::mutex> lock(remoteMetadataMutex);
+					remoteMetadataByDevice.erase(peer.deviceId);
+					lastRemoteMetadataDigest.erase(peer.deviceId);
+				}
 				tcp.removePeer(peer.deviceId);
 			}
 		}
