@@ -1,4 +1,4 @@
-# C++ Build Artifacts
+# C/C++ build artifacts
 *.d
 *.slo
 *.lo
@@ -18,8 +18,10 @@
 *.exe
 *.out
 *.app
+*.dSYM/
+*.su
 
-# CMake Build System
+# CMake / build system
 CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles/
@@ -33,52 +35,57 @@ CTestTestfile.cmake
 _deps/
 CMakeUserPresets.json
 
-# Build Directories
+# Build directories
 build/
 Build/
 cmake-build-debug/
 cmake-build-release/
 out/
 dist/
-*.egg-info/
 
-# IDE and Editor Files
+# IDE / editors
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 *~
 *.user
 *.sublime-project
 *.sublime-workspace
-.DS_Store
-Thumbs.db
 
-# Test and Coverage
-Testing/
+# Coverage / test artifacts
 *.gcov
 coverage/
 .coverage
-htmlcov/
 *.coverage
+htmlcov/
 
-# Generated Files
+# Generated protocol / version files
 src/sync_engine/messages.pb.cc
 src/sync_engine/messages.pb.h
 include/syncflow/version.hpp
 *.pb.cc
 *.pb.h
 
-# Temporary Files
+# Logs / temp / runtime state
 *.tmp
 *.log
 *.bak
 *.backup
-*.swp
 .#*
 log/
+*.pid
+*.resume
 
-# Android/Gradle Build
+# Sync runtime data (local)
+sync_data/
+sync_data_*/
+.syncflow_mirror/
+**/.syncflow_mirror/
+**/.versions/
+
+# Android / Gradle
 **/.gradle/
 **/local.properties
 **/captures/
@@ -87,14 +94,10 @@ log/
 *.apk
 *.aab
 *.aar
-
-# Android Studio
-*.iml
-**/.idea/
 .gradle/
 gradle/wrapper/*.jar
 
-# Desktop UI (Qt)
+# Qt generated
 **/CMakeLists.txt.user
 **/CMakeLists.txt.user.*
 **/ui_*.h
@@ -107,9 +110,7 @@ qrc_*.cpp
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
-build/
 develop-eggs/
 downloads/
 eggs/
@@ -124,23 +125,21 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
-# Virtual Environments
 venv/
 ENV/
 env/
 
-# Documentation Build
+# Docs static build output only
 doc/build/
 docs/_build/
 site/
 
-# Node.js (if used)
+# Node (if used)
 node_modules/
 npm-debug.log
 yarn-error.log
 
-# System Files
+# System files
 .DS_Store
 .AppleDouble
 .LSOverride
@@ -150,26 +149,14 @@ yarn-error.log
 ehthumbs.db
 Thumbs.db
 
-# VS Code Settings (local)
-.vscode/settings.json
-.vscode/launch.json
-.vscode/tasks.json
-
-# Debugging
-*.dSYM/
-*.su
-*.gch
-
-# Third-party builds (keep headers, ignore build artifacts)
+# Third-party local builds
 third_party/**/build/
 third_party/**/CMakeFiles/
 third_party/**/*.a
 third_party/**/*.so
 
-# Local configuration
+# Local env configuration
 .env
 .env.local
 local.properties
-docs/
 checkmate/
-config.json

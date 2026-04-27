@@ -154,6 +154,7 @@ target_link_libraries(app
 		sync_engine
 		crypto
 		security
+		nlohmann_json::nlohmann_json
 		Threads::Threads
 		syncflow_warnings
 		syncflow_release_opts
