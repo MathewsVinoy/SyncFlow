@@ -117,16 +117,13 @@ void Logger::write(const std::string& level, const std::string& message) {
 }
 
 bool Logger::shouldLog(const std::string& message) {
-    // Keywords that indicate sync data logs (show these)
-    const std::string syncKeywords[] = {
-        "sync ", "copy", "removed", "archive", "version", "sync_",
-        "Application initialized", "Application started"
-    };
-
-    // Keywords that indicate connection logs (hide these)
+    // Keywords that indicate connection/discovery logs (hide these)
     const std::string connectionKeywords[] = {
-        "Discovery", "TCP", "Device ", "Broadcast", "handshake", "listener",
-        "peer", "thread", "Thread", "probe", "announce", "RX", "TX"
+        "Discovery", "TCP ", "Broadcast", "handshake listener", "listener failed",
+        "peer observed", "Device removed", "Device ", "probe", "announce", 
+        "RX packet", "TX probe", "TX announce", "TX response",
+        "Thread 1:", "Thread 2:", "Configured port", "Broadcast interval",
+        "Discovery is using", "Discovery loop", "sender failed"
     };
 
     // Check if message contains connection keywords (filter out)
@@ -136,22 +133,7 @@ bool Logger::shouldLog(const std::string& message) {
         }
     }
 
-    // Check if message contains sync keywords (show)
-    for (const auto& keyword : syncKeywords) {
-        if (message.find(keyword) != std::string::npos) {
-            return true;
-        }
-    }
-
-    // Default: hide if it looks like operational/generic logs
-    if (message.find("initialized") != std::string::npos ||
-        message.find("started") != std::string::npos ||
-        message.find("stopped") != std::string::npos ||
-        message.find("shutting") != std::string::npos) {
-        return false;
-    }
-
-    // Show everything else by default (errors, warnings about sync issues)
+    // Show everything else (sync operations, errors, initialization)
     return true;
 }
 
