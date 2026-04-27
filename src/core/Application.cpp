@@ -32,6 +32,7 @@ bool Application::init() {
 	const std::string logLevel = config_.getString("log_level", "info");
 	Logger::init(logFolder);
 	Logger::setLevel(logLevel);
+	Logger::setSyncDataOnly(true);  // Only show sync data logs, filter connection logs
 
 	if (!configLoaded) {
 		Logger::warn("config.json could not be loaded; using defaults");

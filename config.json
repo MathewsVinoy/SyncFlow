@@ -3,7 +3,7 @@
   "broadcast_interval_ms": 2000,
   "device_name": "test",
   "log_level": "info",
-  "mirror_folder": "./sync_data/.syncflow_mirror",
+  "mirror_folder": "/mnt/myworld/dev/open_source_projects/syncflow/./sync_data_cli/.syncflow_mirror",
   "port": 8080,
   "security_shared_secret": "change-me-in-production",
   "sync_folder": "/mnt/myworld/dev/open_source_projects/syncflow/./sync_data_cli"
