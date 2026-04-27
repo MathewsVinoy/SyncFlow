@@ -3,6 +3,7 @@
 #include "sync_engine/HashUtils.h"
 
 #include <filesystem>
+using syncflow::hash::hashFileFNV1a64;
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -74,7 +75,7 @@ RemoteFileInfo RemoteSync::getFileInfo(const std::filesystem::path& file) const 
 		
 		// Compute hash if it's a file
 		if (!info.isDirectory) {
-			info.hash = hashFileFNV1a64(file);
+			info.hash = ::hashFileFNV1a64(file);
 		}
 	}
 	
@@ -106,7 +107,7 @@ std::vector<RemoteFileInfo> RemoteSync::getLocalFileMetadata(const std::filesyst
 			if (info.isDirectory) {
 				info.hash = "";
 			} else {
-				info.hash = hashFileFNV1a64(entry.path());
+				info.hash = ::hashFileFNV1a64(entry.path());
 			}
 			
 			result.push_back(info);
@@ -121,7 +122,7 @@ std::vector<RemoteFileInfo> RemoteSync::getLocalFileMetadata(const std::filesyst
 std::vector<SyncPlan> RemoteSync::compareMeta(
 	const std::vector<RemoteFileInfo>& localMeta,
 	const std::vector<RemoteFileInfo>& remoteMeta,
-	const std::filesystem::path& localRoot
+		const std::filesystem::path& /* localRoot */
 ) const {
 	std::vector<SyncPlan> plans;
 	

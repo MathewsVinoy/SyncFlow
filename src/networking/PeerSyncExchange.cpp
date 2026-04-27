@@ -75,7 +75,7 @@ PeerSyncExchange::FileChunk PeerSyncExchange::parseFileChunk(const std::string& 
 	chunk.filePath = parts[1];
 	chunk.offset = std::stoull(parts[2]);
 	chunk.isFinal = (parts[3] == "1");
-	std::uint64_t dataSize = std::stoull(parts[4]);
+	(void)std::stoull(parts[4]);  // dataSize unused for now
 	
 	// Data starts at parts[5]
 	if (parts.size() > 5) {
