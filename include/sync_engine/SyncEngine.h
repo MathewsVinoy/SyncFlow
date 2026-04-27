@@ -37,6 +37,12 @@ public:
 		std::string hash;
 	};
 
+	struct HashCacheEntry {
+		std::uintmax_t size = 0;
+		std::filesystem::file_time_type modifiedAt{};
+		std::string hash;
+	};
+
 	explicit SyncEngine(std::filesystem::path sourceFolder,
 	                   std::filesystem::path mirrorFolder = {});
 	~SyncEngine();
@@ -87,6 +93,7 @@ private:
 	std::thread transferDispatchThread_;
 	std::deque<std::string> events_;
 	std::unordered_map<std::string, FileEntry> lastSnapshot_;
+	std::unordered_map<std::string, HashCacheEntry> hashCache_;
 	std::unordered_map<std::string, std::chrono::steady_clock::time_point> recentLocalChanges_;
 	std::chrono::milliseconds interval_{1500};
 	std::chrono::seconds loopPreventionWindow_{8};

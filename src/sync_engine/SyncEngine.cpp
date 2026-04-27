@@ -474,6 +474,12 @@ void SyncEngine::archiveVersionIfExists(const std::filesystem::path& mirroredFil
 
 std::unordered_map<std::string, SyncEngine::FileEntry> SyncEngine::buildSnapshot() const {
 	std::unordered_map<std::string, FileEntry> snapshot;
+	std::unordered_map<std::string, HashCacheEntry> previousCache;
+	{
+		std::lock_guard<std::mutex> lock(stateMutex_);
+		previousCache = hashCache_;
+	}
+	std::unordered_map<std::string, HashCacheEntry> nextCache;
 	std::error_code ec;
 	if (!std::filesystem::exists(sourceFolder_, ec)) {
 		return snapshot;
@@ -512,12 +518,25 @@ std::unordered_map<std::string, SyncEngine::FileEntry> SyncEngine::buildSnapshot
 			continue;
 		}
 
-		const auto hash = syncflow::hash::hashFileFNV1a64(entry.path());
+		const auto relString = toGenericString(rel);
+		std::string hash;
+		auto cacheIt = previousCache.find(relString);
+		if (cacheIt != previousCache.end() && cacheIt->second.size == size && cacheIt->second.modifiedAt == modified) {
+			hash = cacheIt->second.hash;
+		} else {
+			hash = syncflow::hash::hashFileSHA256(entry.path());
+		}
 		if (hash.empty()) {
 			continue;
 		}
 
-		snapshot.emplace(toGenericString(rel), FileEntry{size, modified, toUnixSeconds(modified), hash});
+		nextCache[relString] = HashCacheEntry{size, modified, hash};
+		snapshot.emplace(relString, FileEntry{size, modified, toUnixSeconds(modified), hash});
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(stateMutex_);
+		hashCache_ = std::move(nextCache);
 	}
 
 	return snapshot;

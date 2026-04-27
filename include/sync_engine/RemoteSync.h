@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <chrono>
+#include <mutex>
+#include <unordered_map>
 
 namespace syncflow::engine {
 
@@ -67,11 +69,24 @@ public:
 	RemoteFileInfo getFileInfo(const std::filesystem::path& file) const;
 
 private:
+	struct HashCacheEntry {
+		std::uint64_t size = 0;
+		std::uint64_t lastModifiedTime = 0;
+		std::string hash;
+	};
+
+	std::string getCachedOrComputeHash(const std::filesystem::path& file,
+	                                  std::uint64_t size,
+	                                  std::uint64_t modifiedTime) const;
+
 	// Resolve conflicts between versions (returns newer timestamp)
 	std::uint64_t resolveTimestampConflict(
 		std::uint64_t localTime,
 		std::uint64_t remoteTime
 	) const;
+
+	mutable std::mutex cacheMutex_;
+	mutable std::unordered_map<std::string, HashCacheEntry> hashCache_;
 };
 
 } // namespace syncflow::engine

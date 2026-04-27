@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CheckIPOSupported)
 check_ipo_supported(RESULT SYNCFLOW_IPO_SUPPORTED OUTPUT SYNCFLOW_IPO_ERROR)
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 include(CTest)
 
 # Third-party dependencies
@@ -93,6 +94,7 @@ function(syncflow_add_module target_name)
 			target_link_libraries(${target_name}
 				PRIVATE
 					core
+					OpenSSL::Crypto
 			)
 		endif()
 
