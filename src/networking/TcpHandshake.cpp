@@ -532,7 +532,7 @@ bool TcpHandshake::processIncomingLinesLocked(ConnectionState& st) {
 		}
 
 		st.readBuffer.append(buf, static_cast<std::size_t>(rc));
-		if (st.readBuffer.size() > 4096) {
+		if (st.readBuffer.size() > 131072) {
 			pushEventLocked("TCP invalid oversized message ignored: id=" + st.remote.deviceId);
 			return false;
 		}
@@ -606,7 +606,7 @@ bool TcpHandshake::isValidControlLine(const std::string& text) {
 }
 
 bool TcpHandshake::isValidAppPayload(const std::string& payload) {
-	if (payload.empty() || payload.size() > 3500) {
+	if (payload.empty() || payload.size() > 12000) {
 		return false;
 	}
 	return payload.find('\n') == std::string::npos && payload.find('\r') == std::string::npos;
