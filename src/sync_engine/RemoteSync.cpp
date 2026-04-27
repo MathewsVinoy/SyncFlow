@@ -3,7 +3,6 @@
 #include "sync_engine/HashUtils.h"
 
 #include <filesystem>
-using syncflow::hash::hashFileFNV1a64;
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -65,7 +64,7 @@ RemoteFileInfo RemoteSync::getFileInfo(const std::filesystem::path& file) const 
 	info.isDirectory = std::filesystem::is_directory(file);
 	
 	if (std::filesystem::exists(file)) {
-		info.size = std::filesystem::file_size(file);
+		info.size = info.isDirectory ? 0 : std::filesystem::file_size(file);
 		
 		// Get last write time in milliseconds since epoch
 		auto last_write = std::filesystem::last_write_time(file);
@@ -75,7 +74,7 @@ RemoteFileInfo RemoteSync::getFileInfo(const std::filesystem::path& file) const 
 		
 		// Compute hash if it's a file
 		if (!info.isDirectory) {
-			info.hash = ::hashFileFNV1a64(file);
+			info.hash = getCachedOrComputeHash(file, info.size, info.lastModifiedTime);
 		}
 	}
 	
@@ -107,7 +106,7 @@ std::vector<RemoteFileInfo> RemoteSync::getLocalFileMetadata(const std::filesyst
 			if (info.isDirectory) {
 				info.hash = "";
 			} else {
-				info.hash = ::hashFileFNV1a64(entry.path());
+				info.hash = getCachedOrComputeHash(entry.path(), info.size, info.lastModifiedTime);
 			}
 			
 			result.push_back(info);
@@ -169,7 +168,11 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 				continue;
 			}
 			
-			// Both are files - compare timestamps
+			if (!localInfo.hash.empty() && localInfo.hash == remoteInfo.hash) {
+				continue;
+			}
+
+			// Both are files and content differs - compare timestamps
 			if (localInfo.lastModifiedTime > remoteInfo.lastModifiedTime) {
 				// Local file is newer → upload
 				SyncPlan plan{
@@ -261,6 +264,28 @@ std::uint64_t RemoteSync::resolveTimestampConflict(
 ) const {
 	// Simply return the newer timestamp
 	return std::max(localTime, remoteTime);
+}
+
+std::string RemoteSync::getCachedOrComputeHash(const std::filesystem::path& file,
+	                                           std::uint64_t size,
+	                                           std::uint64_t modifiedTime) const {
+	const std::string key = std::filesystem::weakly_canonical(file).string();
+	{
+		std::lock_guard<std::mutex> lock(cacheMutex_);
+		auto it = hashCache_.find(key);
+		if (it != hashCache_.end() && it->second.size == size && it->second.lastModifiedTime == modifiedTime) {
+			return it->second.hash;
+		}
+	}
+
+	const auto hash = syncflow::hash::hashFileSHA256(file);
+	if (hash.empty()) {
+		return {};
+	}
+
+	std::lock_guard<std::mutex> lock(cacheMutex_);
+	hashCache_[key] = HashCacheEntry{size, modifiedTime, hash};
+	return hash;
 }
 
 } // namespace syncflow::engine
