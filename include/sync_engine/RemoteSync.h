@@ -22,7 +22,7 @@ struct RemoteFileInfo {
 };
 
 // Represents sync action between two devices
-enum class SyncAction {
+enum class RemoteSyncAction {
 	None,           // No action needed
 	UploadFile,     // Send local file to remote
 	DownloadFile,   // Receive remote file to local
@@ -33,7 +33,7 @@ enum class SyncAction {
 };
 
 struct SyncPlan {
-	SyncAction action;
+	RemoteSyncAction action;
 	std::string localPath;
 	std::string remotePath;
 	RemoteFileInfo localInfo;

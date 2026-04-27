@@ -46,13 +46,13 @@ RemoteFileInfo RemoteFileInfo::fromWireFormat(const std::string& wire) {
 std::string SyncPlan::description() const {
 	std::string actionStr;
 	switch (action) {
-		case SyncAction::UploadFile: actionStr = "UPLOAD"; break;
-		case SyncAction::DownloadFile: actionStr = "DOWNLOAD"; break;
-		case SyncAction::CreateRemoteDir: actionStr = "CREATE_REMOTE_DIR"; break;
-		case SyncAction::CreateLocalDir: actionStr = "CREATE_LOCAL_DIR"; break;
-		case SyncAction::DeleteRemote: actionStr = "DELETE_REMOTE"; break;
-		case SyncAction::DeleteLocal: actionStr = "DELETE_LOCAL"; break;
-		case SyncAction::None: actionStr = "NONE"; break;
+		case RemoteSyncAction::UploadFile: actionStr = "UPLOAD"; break;
+		case RemoteSyncAction::DownloadFile: actionStr = "DOWNLOAD"; break;
+		case RemoteSyncAction::CreateRemoteDir: actionStr = "CREATE_REMOTE_DIR"; break;
+		case RemoteSyncAction::CreateLocalDir: actionStr = "CREATE_LOCAL_DIR"; break;
+		case RemoteSyncAction::DeleteRemote: actionStr = "DELETE_REMOTE"; break;
+		case RemoteSyncAction::DeleteLocal: actionStr = "DELETE_LOCAL"; break;
+		case RemoteSyncAction::None: actionStr = "NONE"; break;
 	}
 	return actionStr + ": " + localPath + " <-> " + remotePath;
 }
@@ -145,7 +145,7 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 		if (it == remoteMap.end()) {
 			// File exists locally but not on remote → upload
 			SyncPlan plan{
-				.action = SyncAction::UploadFile,
+				.action = RemoteSyncAction::UploadFile,
 				.localPath = localPath,
 				.remotePath = localPath,
 				.localInfo = localInfo,
@@ -173,7 +173,7 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 			if (localInfo.lastModifiedTime > remoteInfo.lastModifiedTime) {
 				// Local file is newer → upload
 				SyncPlan plan{
-					.action = SyncAction::UploadFile,
+					.action = RemoteSyncAction::UploadFile,
 					.localPath = localPath,
 					.remotePath = localPath,
 					.localInfo = localInfo,
@@ -184,7 +184,7 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 			} else if (remoteInfo.lastModifiedTime > localInfo.lastModifiedTime) {
 				// Remote file is newer → download
 				SyncPlan plan{
-					.action = SyncAction::DownloadFile,
+					.action = RemoteSyncAction::DownloadFile,
 					.localPath = localPath,
 					.remotePath = localPath,
 					.localInfo = localInfo,
@@ -204,7 +204,7 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 		if (it == localMap.end()) {
 			// File exists on remote but not locally → download
 			SyncPlan plan{
-				.action = SyncAction::DownloadFile,
+				.action = RemoteSyncAction::DownloadFile,
 				.localPath = remotePath,
 				.remotePath = remotePath,
 				.localInfo = RemoteFileInfo{},

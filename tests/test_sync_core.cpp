@@ -2,9 +2,12 @@
 #include "security/AuthManager.h"
 #include "sync_engine/FileTransfer.h"
 #include "sync_engine/SyncPlanner.h"
+#include "sync_engine/RemoteSync.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
+#include <thread>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -139,6 +142,71 @@ int main() {
 		std::cerr << "transfer test failed\n";
 		return 1;
 	}
+	if (runRemoteSyncTest() != 0) {
+		std::cerr << "remote sync test failed\n";
+		return 1;
+	}
 	std::cout << "all tests passed\n";
+	return 0;
+}
+
+int runRemoteSyncTest() {
+	// Create test directories
+	std::filesystem::path tmpDir = "tmp_test_remote_sync";
+	std::filesystem::remove_all(tmpDir);
+	std::filesystem::create_directories(tmpDir / "device1");
+	std::filesystem::create_directories(tmpDir / "device2");
+	
+	// Create test files on device1
+	std::ofstream f1(tmpDir / "device1" / "file1.txt");
+	f1 << "content1";
+	f1.close();
+	
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	
+	// Create file2 on device2 (newer)
+	std::ofstream f2(tmpDir / "device2" / "file2.txt");
+	f2 << "content2";
+	f2.close();
+	
+	// Get metadata from both devices
+	syncflow::engine::RemoteSync sync;
+	auto meta1 = sync.getLocalFileMetadata(tmpDir / "device1");
+	auto meta2 = sync.getLocalFileMetadata(tmpDir / "device2");
+	
+	if (meta1.empty() || meta2.empty()) {
+		std::cout << "RemoteSync test failed: no metadata collected\n";
+		return 1;
+	}
+	
+	// Compare and plan sync
+	auto plan = sync.compareMeta(meta1, meta2, tmpDir / "device1");
+	
+	// We expect: file1.txt from device1 to upload, file2.txt from device2 to download
+	bool hasDownloadFile2 = false;
+	for (const auto& p : plan) {
+		if (p.remotePath == "file2.txt" && 
+		    p.action == syncflow::engine::SyncAction::DownloadFile) {
+			hasDownloadFile2 = true;
+			break;
+		}
+	}
+	
+	if (!hasDownloadFile2) {
+		std::cout << "RemoteSync test failed: expected DOWNLOAD plan for file2.txt\n";
+		return 1;
+	}
+	
+	// Test encoding/decoding
+	std::string encoded = sync.encodeMetadataList(meta1);
+	auto decoded = sync.decodeMetadataList(encoded);
+	
+	if (decoded.size() != meta1.size()) {
+		std::cout << "RemoteSync test failed: encode/decode mismatch\n";
+		return 1;
+	}
+	
+	std::filesystem::remove_all(tmpDir);
+	std::cout << "RemoteSync test passed\n";
 	return 0;
 }
