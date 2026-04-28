@@ -239,6 +239,27 @@ if(BUILD_TESTING)
 	)
 
 	add_test(NAME syncflow_tests COMMAND syncflow_tests)
+
+	# Platform tests
+	add_executable(platform_tests
+		tests/test_platform.cpp
+	)
+
+	target_include_directories(platform_tests
+		PRIVATE
+			"${PROJECT_SOURCE_DIR}/include"
+	)
+
+	target_link_libraries(platform_tests
+		PRIVATE
+			platform
+			core
+			Threads::Threads
+			syncflow_warnings
+			syncflow_release_opts
+	)
+
+	add_test(NAME platform_tests COMMAND platform_tests)
 endif()
 
 # ========== CPack Configuration ==========
