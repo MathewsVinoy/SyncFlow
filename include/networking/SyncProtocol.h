@@ -35,6 +35,7 @@ struct SyncMessage {
 	std::string destinationDeviceId;
 	std::string payload;
 	std::uint64_t offset = 0;
+	std::uint64_t fileSize = 0;  // Total file size for resumable transfers
 	bool finalChunk = false;
 	std::vector<FileMetadata> files;
 };

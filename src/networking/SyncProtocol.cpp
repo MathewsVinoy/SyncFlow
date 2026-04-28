@@ -72,6 +72,7 @@ std::string encode(const SyncMessage& message) {
 	    << message.sourceDeviceId << '|'
 	    << message.destinationDeviceId << '|'
 	    << message.offset << '|'
+	    << message.fileSize << '|'
 	    << (message.finalChunk ? 1 : 0) << '|'
 	    << message.payload;
 
@@ -101,7 +102,7 @@ std::optional<SyncMessage> decode(const std::string& raw) {
 		tokens.push_back(token);
 	}
 
-	if (tokens.size() < 7) {
+	if (tokens.size() < 8) {
 		return std::nullopt;
 	}
 
@@ -113,17 +114,18 @@ std::optional<SyncMessage> decode(const std::string& raw) {
 
 	try {
 		message.offset = static_cast<std::uint64_t>(std::stoull(tokens[4]));
-		message.finalChunk = tokens[5] == "1";
+		message.fileSize = static_cast<std::uint64_t>(std::stoull(tokens[5]));
+		message.finalChunk = tokens[6] == "1";
 	} catch (...) {
 		return std::nullopt;
 	}
 
-	message.payload = tokens[6];
-	if (tokens.size() < 8 || tokens[7].empty()) {
+	message.payload = tokens[7];
+	if (tokens.size() < 9 || tokens[8].empty()) {
 		return message;
 	}
 
-	std::stringstream filesStream(tokens[7]);
+	std::stringstream filesStream(tokens[8]);
 	std::string fileToken;
 	while (std::getline(filesStream, fileToken, ';')) {
 		if (fileToken.empty()) {
