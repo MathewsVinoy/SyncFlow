@@ -81,7 +81,7 @@ PeerSyncExchange::FileChunk PeerSyncExchange::parseFileChunk(const std::string& 
 		chunk.fileSize = std::stoull(parts[2]);
 		chunk.offset = std::stoull(parts[3]);
 		chunk.isFinal = (parts[4] == "1");
-		const auto dataSize = std::stoull(parts[5]);
+		(void)std::stoull(parts[5]);  // dataSize - just validate it exists
 		
 		// Data starts at parts[6]
 		if (parts.size() > 6) {

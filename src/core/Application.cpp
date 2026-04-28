@@ -413,6 +413,7 @@ int Application::run() {
 	                           &incomingTransfers,
 	                           &outboundInProgress,
 	                           &pendingDownloadRequests,
+	                           &outboundTransfers,
 	                           &syncFolder]() {
 		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);

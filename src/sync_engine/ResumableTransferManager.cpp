@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <system_error>
 
@@ -28,11 +29,11 @@ std::string ResumableTransferManager::generateTransferId(const std::string& file
 	// Example: "down_device123_a1b2c3d4"
 	std::hash<std::string> hasher;
 	const auto pathHashValue = hasher(filePath);
-	std::ostringstream oss;
-	oss << std::hex << pathHashValue;
-	const auto truncatedHash = oss.str().substr(0, 8);
-	const auto direction = isDownload ? "down" : "up";
-	return direction + "_" + remoteDeviceId + "_" + truncatedHash;
+	std::string hashStr = std::to_string(pathHashValue);
+	const auto truncatedHash = hashStr.substr(0, std::min(size_t(8), hashStr.length()));
+	const std::string direction = isDownload ? "down" : "up";
+	std::string result = direction + "_" + remoteDeviceId + "_" + truncatedHash;
+	return result;
 }
 
 std::optional<TransferState> ResumableTransferManager::loadTransferState(
@@ -261,10 +262,11 @@ std::size_t ResumableTransferManager::cleanupStaleTransfers(int retentionDays) c
 			continue;
 		}
 
+		const auto now = std::filesystem::file_time_type::clock::now();
 		const auto age = now - lastWrite;
 		if (age > retentionPeriod) {
 			std::filesystem::remove(entry, ec);
-			const auto tempFile = tempRoot_ / entry.path().filename();
+			auto tempFile = tempRoot_ / entry.path().filename();
 			tempFile.replace_extension(".tmp");
 			std::filesystem::remove(tempFile, ec);
 			cleanedCount++;
