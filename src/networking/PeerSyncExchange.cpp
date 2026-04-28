@@ -49,13 +49,17 @@ std::vector<syncflow::engine::SyncPlan> PeerSyncExchange::planSync(
 	return remoteSync_.compareMeta(localMeta, remoteMeta, syncFolder_);
 }
 
-std::string PeerSyncExchange::buildFileTransferRequest(const std::string& filePath, std::uint64_t offset) const {
-	// Message format: REQ_FILE|filePath|offset
-	return "REQ_FILE|" + filePath + "|" + std::to_string(offset);
+std::string PeerSyncExchange::buildFileTransferRequest(const std::string& filePath,
+                                                     std::uint64_t fileSize,
+                                                     std::uint64_t offset) const {
+	// Message format: REQ_FILE|filePath|fileSize|offset
+	Logger::debug("PeerSyncExchange: Building file transfer request - filePath: " + filePath +
+	              ", fileSize: " + std::to_string(fileSize) + ", offset: " + std::to_string(offset));
+	return "REQ_FILE|" + filePath + "|" + std::to_string(fileSize) + "|" + std::to_string(offset);
 }
 
 PeerSyncExchange::FileChunk PeerSyncExchange::parseFileChunk(const std::string& message) const {
-	// Expected format: FILE_CHUNK|filePath|offset|isFinal|dataSize|data
+	// Expected format: FILE_CHUNK|filePath|fileSize|offset|isFinal|dataSize|data
 	FileChunk chunk{};
 	
 	std::stringstream ss(message);
@@ -66,21 +70,32 @@ PeerSyncExchange::FileChunk PeerSyncExchange::parseFileChunk(const std::string& 
 		parts.push_back(part);
 	}
 	
-	if (parts.size() < 5) {
-		Logger::warn("PeerSyncExchange: invalid file chunk format");
+	if (parts.size() < 6) {
+		Logger::warn("PeerSyncExchange: invalid file chunk format (expected at least 6 parts)");
 		return chunk;
 	}
 	
-	// parts[0] = "FILE_CHUNK"
-	chunk.filePath = parts[1];
-	chunk.offset = std::stoull(parts[2]);
-	chunk.isFinal = (parts[3] == "1");
-	(void)std::stoull(parts[4]);  // dataSize unused for now
-	
-	// Data starts at parts[5]
-	if (parts.size() > 5) {
-		std::string data = parts[5];
-		chunk.data = std::vector<char>(data.begin(), data.end());
+	try {
+		// parts[0] = "FILE_CHUNK"
+		chunk.filePath = parts[1];
+		chunk.fileSize = std::stoull(parts[2]);
+		chunk.offset = std::stoull(parts[3]);
+		chunk.isFinal = (parts[4] == "1");
+		const auto dataSize = std::stoull(parts[5]);
+		
+		// Data starts at parts[6]
+		if (parts.size() > 6) {
+			std::string data = parts[6];
+			chunk.data = std::vector<char>(data.begin(), data.end());
+		}
+		
+		Logger::debug("PeerSyncExchange: Parsed file chunk - filePath: " + chunk.filePath +
+		              ", fileSize: " + std::to_string(chunk.fileSize) +
+		              ", offset: " + std::to_string(chunk.offset) +
+		              ", dataSize: " + std::to_string(chunk.data.size()) +
+		              ", final: " + (chunk.isFinal ? "true" : "false"));
+	} catch (const std::exception& e) {
+		Logger::warn("PeerSyncExchange: Failed to parse file chunk - " + std::string(e.what()));
 	}
 	
 	return chunk;
@@ -88,17 +103,26 @@ PeerSyncExchange::FileChunk PeerSyncExchange::parseFileChunk(const std::string& 
 
 std::string PeerSyncExchange::buildFileChunk(
 	const std::string& filePath,
+	std::uint64_t fileSize,
 	const std::vector<char>& data,
 	std::uint64_t offset,
 	bool isFinal
 ) const {
-	// Message format: FILE_CHUNK|filePath|offset|isFinal|dataSize|data
+	// Message format: FILE_CHUNK|filePath|fileSize|offset|isFinal|dataSize|data
 	std::string result = "FILE_CHUNK|" + filePath + "|" 
+		+ std::to_string(fileSize) + "|"
 		+ std::to_string(offset) + "|"
 		+ (isFinal ? "1" : "0") + "|"
 		+ std::to_string(data.size()) + "|";
 	
 	result.append(data.begin(), data.end());
+	
+	Logger::debug("PeerSyncExchange: Built file chunk - filePath: " + filePath +
+	              ", fileSize: " + std::to_string(fileSize) +
+	              ", offset: " + std::to_string(offset) +
+	              ", dataSize: " + std::to_string(data.size()) +
+	              ", final: " + (isFinal ? "true" : "false"));
+	
 	return result;
 }
 

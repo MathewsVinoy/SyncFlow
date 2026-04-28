@@ -1,8 +1,14 @@
 #include "sync_engine/FileTransfer.h"
+#include "core/Logger.h"
 
 #include <array>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <system_error>
+
+// OpenSSL for SHA256
+#include <openssl/sha.h>
 
 namespace syncflow::engine {
 
@@ -44,12 +50,15 @@ FileTransfer::FileTransfer(std::size_t chunkSize) : chunkSize_(chunkSize == 0 ? 
 std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path& file, std::uint64_t offset) const {
 	std::ifstream in(file, std::ios::binary);
 	if (!in.is_open()) {
+		Logger::error("FileTransfer: Failed to open file for reading - " + file.string());
 		return std::nullopt;
 	}
 
 	in.seekg(0, std::ios::end);
 	const auto totalSize = static_cast<std::uint64_t>(in.tellg());
 	if (offset >= totalSize) {
+		Logger::debug("FileTransfer: Offset beyond file size - file: " + file.string() +
+		              ", offset: " + std::to_string(offset) + ", size: " + std::to_string(totalSize));
 		return TransferChunk{offset, {}, true};
 	}
 
@@ -60,6 +69,8 @@ std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path
 	bytes.resize(n);
 
 	const bool last = (offset + n) >= totalSize;
+	Logger::debug("FileTransfer: Read chunk - file: " + file.string() + ", offset: " + std::to_string(offset) +
+	              ", size: " + std::to_string(n) + ", last: " + (last ? "true" : "false"));
 	return TransferChunk{offset, std::move(bytes), last};
 }
 
@@ -67,6 +78,7 @@ bool FileTransfer::writeChunk(const std::filesystem::path& file, const TransferC
 	std::error_code ec;
 	std::filesystem::create_directories(file.parent_path(), ec);
 	if (ec) {
+		Logger::error("FileTransfer: Failed to create parent directories - " + file.string());
 		return false;
 	}
 
@@ -74,19 +86,179 @@ bool FileTransfer::writeChunk(const std::filesystem::path& file, const TransferC
 	if (!out.is_open()) {
 		out.open(file, std::ios::binary | std::ios::out);
 		if (!out.is_open()) {
+			Logger::error("FileTransfer: Failed to open file for writing - " + file.string());
 			return false;
 		}
 	}
 
 	out.seekp(static_cast<std::streamoff>(chunk.offset), std::ios::beg);
 	out.write(reinterpret_cast<const char*>(chunk.bytes.data()), static_cast<std::streamsize>(chunk.bytes.size()));
-	return static_cast<bool>(out);
+	if (!out) {
+		Logger::error("FileTransfer: Failed to write chunk to file - " + file.string());
+		return false;
+	}
+
+	Logger::debug("FileTransfer: Wrote chunk - file: " + file.string() + ", offset: " + std::to_string(chunk.offset) +
+	              ", size: " + std::to_string(chunk.bytes.size()));
+	return true;
+}
+
+bool FileTransfer::writeChunkToTemporary(const std::filesystem::path& tempFile,
+                                        const TransferChunk& chunk,
+                                        bool verifyOffset) const {
+	std::error_code ec;
+	std::filesystem::create_directories(tempFile.parent_path(), ec);
+	if (ec) {
+		Logger::error("FileTransfer: Failed to create parent directories for temp file - " + tempFile.string());
+		return false;
+	}
+
+	// Open in append mode to ensure sequential writes
+	std::fstream out(tempFile, std::ios::binary | std::ios::app);
+	if (!out.is_open()) {
+		// If append fails, try creating new file
+		out.open(tempFile, std::ios::binary | std::ios::out);
+		if (!out.is_open()) {
+			Logger::error("FileTransfer: Failed to open temporary file for writing - " + tempFile.string());
+			return false;
+		}
+	}
+
+	// If verifying offset, check that file size matches chunk offset
+	if (verifyOffset) {
+		std::error_code sizeEc;
+		const auto currentSize = std::filesystem::file_size(tempFile, sizeEc);
+		if (!sizeEc && currentSize != chunk.offset) {
+			Logger::warn("FileTransfer: Temporary file offset mismatch - file: " + tempFile.string() +
+			             ", current size: " + std::to_string(currentSize) +
+			             ", chunk offset: " + std::to_string(chunk.offset));
+			// Don't fail here - just log the mismatch. The caller may handle partial writes.
+		}
+	}
+
+	// Write chunk data at EOF (append mode)
+	out.write(reinterpret_cast<const char*>(chunk.bytes.data()), static_cast<std::streamsize>(chunk.bytes.size()));
+	out.flush();
+
+	if (!out) {
+		Logger::error("FileTransfer: Failed to write chunk to temporary file - " + tempFile.string());
+		return false;
+	}
+
+	Logger::debug("FileTransfer: Wrote chunk to temporary file - file: " + tempFile.string() +
+	              ", chunk size: " + std::to_string(chunk.bytes.size()));
+	return true;
+}
+
+bool FileTransfer::completeTransfer(const std::filesystem::path& tempFile,
+                                   const std::filesystem::path& finalFile,
+                                   bool verifySize,
+                                   std::uint64_t expectedSize) const {
+	if (!std::filesystem::exists(tempFile)) {
+		Logger::error("FileTransfer: Temporary file does not exist - " + tempFile.string());
+		return false;
+	}
+
+	// Verify file size if requested
+	if (verifySize && expectedSize > 0) {
+		std::error_code ec;
+		const auto tempSize = std::filesystem::file_size(tempFile, ec);
+		if (ec || tempSize != expectedSize) {
+			Logger::error("FileTransfer: Transfer incomplete - size mismatch. File: " + tempFile.string() +
+			              ", current size: " + std::to_string(tempSize) +
+			              ", expected size: " + std::to_string(expectedSize));
+			return false;
+		}
+	}
+
+	// Create parent directories
+	std::error_code ec;
+	std::filesystem::create_directories(finalFile.parent_path(), ec);
+	if (ec) {
+		Logger::error("FileTransfer: Failed to create final directory - " + finalFile.string());
+		return false;
+	}
+
+	// Atomic rename from temp to final location
+	std::error_code renameEc;
+	std::filesystem::rename(tempFile, finalFile, renameEc);
+	if (renameEc) {
+		Logger::error("FileTransfer: Failed to rename temp file to final location - temp: " + tempFile.string() +
+		              ", final: " + finalFile.string() + ", error: " + renameEc.message());
+		return false;
+	}
+
+	Logger::info("FileTransfer: Transfer completed and file moved to final location - " + finalFile.string());
+	return true;
+}
+
+bool FileTransfer::verifyFile(const std::filesystem::path& file,
+                             std::uint64_t expectedSize,
+                             const std::string& expectedHash) const {
+	std::error_code ec;
+	if (!std::filesystem::exists(file, ec)) {
+		Logger::warn("FileTransfer: File does not exist for verification - " + file.string());
+		return false;
+	}
+
+	const auto actualSize = std::filesystem::file_size(file, ec);
+	if (ec || actualSize != expectedSize) {
+		Logger::warn("FileTransfer: File size mismatch - file: " + file.string() +
+		             ", actual: " + std::to_string(actualSize) +
+		             ", expected: " + std::to_string(expectedSize));
+		return false;
+	}
+
+	if (!expectedHash.empty()) {
+		const auto actualHash = calculateFileHash(file);
+		if (actualHash != expectedHash) {
+			Logger::warn("FileTransfer: File hash mismatch - file: " + file.string() +
+			             ", actual: " + actualHash +
+			             ", expected: " + expectedHash);
+			return false;
+		}
+		Logger::debug("FileTransfer: File hash verified - file: " + file.string());
+	}
+
+	return true;
+}
+
+std::string FileTransfer::calculateFileHash(const std::filesystem::path& file) const {
+	std::ifstream in(file, std::ios::binary);
+	if (!in.is_open()) {
+		Logger::error("FileTransfer: Failed to open file for hashing - " + file.string());
+		return "";
+	}
+
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+
+	std::array<char, 65536> buffer{};
+	while (in.read(buffer.data(), buffer.size()) || in.gcount() > 0) {
+		SHA256_Update(&sha256, buffer.data(), in.gcount());
+	}
+
+	SHA256_Final(hash, &sha256);
+
+	// Convert hash to hex string
+	std::ostringstream hashStream;
+	for (unsigned char byte : hash) {
+		hashStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+	}
+
+	const auto hashStr = hashStream.str();
+	Logger::debug("FileTransfer: Calculated file hash - file: " + file.string() +
+	              ", hash: " + hashStr);
+	return hashStr;
 }
 
 std::uint64_t FileTransfer::fileSize(const std::filesystem::path& file) const {
 	std::error_code ec;
 	const auto sz = std::filesystem::file_size(file, ec);
 	if (ec) {
+		Logger::warn("FileTransfer: Failed to get file size - " + file.string() +
+		             ", error: " + ec.message());
 		return 0;
 	}
 	return sz;

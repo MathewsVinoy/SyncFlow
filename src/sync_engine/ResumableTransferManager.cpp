@@ -27,8 +27,10 @@ std::string ResumableTransferManager::generateTransferId(const std::string& file
 	// Generate ID: direction_deviceId_hash(filePath)
 	// Example: "down_device123_a1b2c3d4"
 	std::hash<std::string> hasher;
-	const auto pathHash = std::to_string(hasher(filePath));
-	const auto truncatedHash = pathHash.substr(0, 8);
+	const auto pathHashValue = hasher(filePath);
+	std::ostringstream oss;
+	oss << std::hex << pathHashValue;
+	const auto truncatedHash = oss.str().substr(0, 8);
 	const auto direction = isDownload ? "down" : "up";
 	return direction + "_" + remoteDeviceId + "_" + truncatedHash;
 }
