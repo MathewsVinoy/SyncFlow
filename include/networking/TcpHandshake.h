@@ -8,7 +8,11 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
+
+struct ssl_ctx_st;
+struct ssl_st;
 
 class TcpHandshake {
 public:
@@ -43,8 +47,10 @@ private:
 	struct ConnectionState {
 		RemoteDevice remote;
 		std::intptr_t socket = -1;
+		ssl_st* ssl = nullptr;
 		bool connected = false;
 		bool outbound = false;
+		std::string tlsPeerDeviceId;
 		std::string readBuffer;
 		std::chrono::steady_clock::time_point lastPingSent{};
 		std::chrono::steady_clock::time_point lastPongSeen{};
@@ -56,6 +62,13 @@ private:
 	std::uint16_t listenPort_;
 	bool running_;
 	std::intptr_t listenSocket_;
+	ssl_ctx_st* serverTlsContext_;
+	ssl_ctx_st* clientTlsContext_;
+	std::string tlsRootDir_;
+	std::string tlsKeyPath_;
+	std::string tlsCertPath_;
+	std::string tlsTrustDir_;
+	std::unordered_set<std::string> loadedTrustedDeviceIds_;
 
 	mutable std::mutex stateMutex_;
 	std::unordered_map<std::string, ConnectionState> states_;
@@ -65,7 +78,11 @@ private:
 	void pushEventLocked(const std::string& event);
 	void acceptIncoming();
 	void processConnections();
+	void closeConnectionTransportLocked(ConnectionState& state);
 	void disconnectLocked(ConnectionState& state, const std::string& reason);
+	bool ensureTlsInitializedLocked();
+	bool loadTrustedDeviceLocked(const std::string& deviceId);
+	bool isPeerTrustedLocked(const std::string& deviceId) const;
 	bool connectAndHandshakeLocked(ConnectionState& state);
 	bool processIncomingLinesLocked(ConnectionState& state);
 

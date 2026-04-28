@@ -109,6 +109,14 @@ function(syncflow_add_module target_name)
 			target_link_libraries(${target_name}
 				PRIVATE
 					ws2_32
+					OpenSSL::SSL
+					OpenSSL::Crypto
+			)
+		elseif(target_name STREQUAL "networking")
+			target_link_libraries(${target_name}
+				PRIVATE
+					OpenSSL::SSL
+					OpenSSL::Crypto
 			)
 		endif()
 
