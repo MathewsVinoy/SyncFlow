@@ -43,11 +43,23 @@ struct BasicFileMetadata {
 struct IncomingTransfer {
 	std::filesystem::path targetPath;
 	std::filesystem::path tempPath;
-	std::unique_ptr<std::ofstream> out;
+	std::unique_ptr<std::fstream> out;
 	std::uint64_t expectedSize = 0;
 	std::uint64_t expectedModifiedMs = 0;
 	std::uint64_t written = 0;
 	std::chrono::steady_clock::time_point lastActivity{};
+};
+
+struct OutboundTransfer {
+	std::mutex mutex;
+	std::condition_variable cv;
+	std::uint64_t resumeOffset = 0;
+	bool resumeKnown = false;
+	bool cancelled = false;
+	std::uint64_t fileSize = 0;
+	std::uint64_t modifiedMs = 0;
+	std::string relativePath;
+	std::string peerId;
 };
 
 using MetadataSnapshot = std::map<std::string, BasicFileMetadata>;
@@ -263,6 +275,10 @@ std::optional<std::vector<char>> hexToBytes(const std::string& hex) {
 std::string transferKey(const std::string& peerId, const std::string& relPath) {
 	return peerId + "|" + relPath;
 }
+
+std::string tempTransferPath(const std::filesystem::path& targetPath, const std::string& peerId) {
+	return targetPath.string() + ".part." + peerId;
+}
 }  // namespace
 
 bool Application::init() {
@@ -360,7 +376,8 @@ int Application::run() {
 	std::unordered_map<std::string, MetadataSnapshot> remoteMetadataByDevice;
 	std::unordered_map<std::string, std::string> lastRemoteMetadataDigest;
 	std::mutex transferMutex;
-	std::unordered_map<std::string, IncomingTransfer> incomingTransfers;
+	std::unordered_map<std::string, std::shared_ptr<IncomingTransfer>> incomingTransfers;
+	std::unordered_map<std::string, std::shared_ptr<OutboundTransfer>> outboundTransfers;
 	std::unordered_set<std::string> outboundInProgress;
 	std::unordered_set<std::string> pendingDownloadRequests;
 
@@ -416,9 +433,12 @@ int Application::run() {
 			}
 
 			std::thread([&, peerId, relPath, key]() {
-				auto release = [&]() {
+				auto release = [&](bool keepState = false) {
 					std::lock_guard<std::mutex> lock(transferMutex);
 					outboundInProgress.erase(key);
+					if (!keepState) {
+						outboundTransfers.erase(key);
+					}
 				};
 
 				const std::filesystem::path target = std::filesystem::path(syncFolder) / relPath;
@@ -436,10 +456,44 @@ int Application::run() {
 				auto info = remoteSync.getFileInfo(target);
 				const std::uint64_t modifiedMs = info.lastModifiedTime;
 
+				auto state = std::make_shared<OutboundTransfer>();
+				state->fileSize = fileSize;
+				state->modifiedMs = modifiedMs;
+				state->relativePath = relPath;
+				state->peerId = peerId;
+				{
+					std::lock_guard<std::mutex> lock(transferMutex);
+					outboundTransfers[key] = state;
+				}
+
 				if (!tcp.sendMessage(peerId,
-				                     "SEND|" + relPath + "|" + std::to_string(fileSize) + "|" +
+				                     "SEND|" + relPath + "|" + std::to_string(fileSize) + "|0|" +
 				                         std::to_string(modifiedMs))) {
 					Logger::warn("transfer send failed (SEND): " + relPath + " -> " + peerId);
+					release();
+					return;
+				}
+
+				std::uint64_t resumeOffset = 0;
+				{
+					std::unique_lock<std::mutex> lock(state->mutex);
+					if (!state->cv.wait_for(lock, std::chrono::seconds(10), [&]() {
+						return state->resumeKnown || state->cancelled || !g_keepRunning.load();
+					})) {
+						Logger::warn("transfer SEND timed out waiting for resume: " + relPath + " -> " + peerId);
+						release();
+						return;
+					}
+					if (state->cancelled || !g_keepRunning.load()) {
+						Logger::warn("transfer SEND cancelled before streaming: " + relPath + " -> " + peerId);
+						release();
+						return;
+					}
+					resumeOffset = state->resumeOffset;
+				}
+
+				if (resumeOffset > fileSize) {
+					Logger::warn("transfer send invalid resume offset: " + relPath + " -> " + peerId);
 					release();
 					return;
 				}
@@ -450,10 +504,16 @@ int Application::run() {
 					release();
 					return;
 				}
+				in.seekg(static_cast<std::streamoff>(resumeOffset), std::ios::beg);
+				if (!in.good()) {
+					Logger::warn("transfer send failed (seek): " + target.string());
+					release();
+					return;
+				}
 
 				constexpr std::size_t kChunkSize = 4096;
 				std::vector<char> buf(kChunkSize);
-				std::uint64_t offset = 0;
+				std::uint64_t offset = resumeOffset;
 				while (in.good()) {
 					in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
 					const auto n = static_cast<std::size_t>(in.gcount());
@@ -479,7 +539,8 @@ int Application::run() {
 					return;
 				}
 
-				Logger::info("transfer sent: " + relPath + " -> " + peerId + " bytes=" + std::to_string(fileSize));
+				Logger::info("transfer sent: " + relPath + " -> " + peerId + " bytes=" + std::to_string(fileSize) +
+				             " resume=" + std::to_string(resumeOffset));
 				release();
 			}).detach();
 		};
@@ -494,6 +555,50 @@ int Application::run() {
 				const std::string& peerId = inbound->deviceId;
 				const std::string& msg = inbound->payload;
 
+				if (msg.rfind("READY|", 0) == 0 || msg.rfind("RESUME|", 0) == 0) {
+					auto parts = splitByPipe(msg);
+					if (parts.size() < 4 || !isTransferPathSafe(parts[1])) {
+						Logger::warn("transfer READY/RESUME ignored (malformed): from=" + peerId);
+						continue;
+					}
+
+					auto offset = parseUnsigned64(parts[2]);
+					auto fileSize = parseUnsigned64(parts[3]);
+					auto modifiedMs = parts.size() >= 5 ? parseUnsigned64(parts[4]) : std::optional<std::uint64_t>{};
+					if (!offset.has_value() || !fileSize.has_value()) {
+						Logger::warn("transfer READY/RESUME ignored (invalid numbers): from=" + peerId);
+						continue;
+					}
+
+					const std::string key = transferKey(peerId, parts[1]);
+					std::shared_ptr<OutboundTransfer> state;
+					{
+						std::lock_guard<std::mutex> lock(transferMutex);
+						auto it = outboundTransfers.find(key);
+						if (it != outboundTransfers.end()) {
+							state = it->second;
+						}
+					}
+
+					if (!state) {
+						continue;
+					}
+
+					{
+						std::lock_guard<std::mutex> lock(state->mutex);
+						state->resumeOffset = *offset;
+						state->resumeKnown = true;
+						state->fileSize = *fileSize;
+						if (modifiedMs.has_value()) {
+							state->modifiedMs = *modifiedMs;
+						}
+					}
+					state->cv.notify_all();
+					Logger::info(std::string(msg.rfind("RESUME|", 0) == 0 ? "transfer resume accepted: " : "transfer ready: ") +
+					             parts[1] + " <- " + peerId + " offset=" + std::to_string(*offset));
+					continue;
+				}
+
 				if (msg.rfind("GET|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if (parts.size() != 2 || !isTransferPathSafe(parts[1])) {
@@ -506,20 +611,22 @@ int Application::run() {
 
 				if (msg.rfind("SEND|", 0) == 0) {
 					auto parts = splitByPipe(msg);
-					if (parts.size() != 4 || !isTransferPathSafe(parts[1])) {
+					if ((parts.size() != 4 && parts.size() != 5) || !isTransferPathSafe(parts[1])) {
 						Logger::warn("transfer SEND ignored (malformed): from=" + peerId);
 						continue;
 					}
 
 					auto fileSize = parseUnsigned64(parts[2]);
-					auto modifiedMs = parseUnsigned64(parts[3]);
-					if (!fileSize.has_value() || !modifiedMs.has_value()) {
+					auto senderOffset = parseUnsigned64(parts[3]);
+					auto modifiedMs = parts.size() >= 5 ? parseUnsigned64(parts[4]) : std::optional<std::uint64_t>{0};
+					if (!fileSize.has_value() || !senderOffset.has_value() || !modifiedMs.has_value()) {
 						Logger::warn("transfer SEND ignored (invalid numbers): from=" + peerId);
 						continue;
 					}
 
 					const auto relPath = std::filesystem::path(parts[1]);
 					const auto targetPath = std::filesystem::path(syncFolder) / relPath;
+					const auto tempPath = std::filesystem::path(tempTransferPath(targetPath, peerId));
 					std::error_code ec;
 					std::filesystem::create_directories(targetPath.parent_path(), ec);
 					if (ec) {
@@ -527,22 +634,87 @@ int Application::run() {
 						continue;
 					}
 
-					IncomingTransfer state;
-					state.targetPath = targetPath;
-					state.tempPath = targetPath;
-					state.tempPath += ".part." + peerId;
-					state.out = std::make_unique<std::ofstream>(state.tempPath, std::ios::binary | std::ios::trunc);
-					if (!state.out || !state.out->is_open()) {
-						Logger::warn("transfer SEND ignored (temp open failed): " + state.tempPath.string());
+					std::shared_ptr<IncomingTransfer> state;
+					std::uint64_t resumeOffset = 0;
+					{
+						std::lock_guard<std::mutex> lock(transferMutex);
+						auto& slot = incomingTransfers[transferKey(peerId, parts[1])];
+						if (!slot) {
+							slot = std::make_shared<IncomingTransfer>();
+						}
+						const bool sameTransfer = slot->targetPath == targetPath && slot->tempPath == tempPath &&
+						                         slot->expectedSize == *fileSize && slot->expectedModifiedMs == *modifiedMs;
+
+						if (!sameTransfer) {
+							if (slot->out && slot->out->is_open()) {
+								slot->out->close();
+							}
+							slot = std::make_shared<IncomingTransfer>();
+							slot->targetPath = targetPath;
+							slot->tempPath = tempPath;
+							slot->expectedSize = *fileSize;
+							slot->expectedModifiedMs = *modifiedMs;
+						}
+
+						std::error_code fileEc;
+						const bool existed = std::filesystem::exists(tempPath, fileEc) && !fileEc;
+						std::uint64_t existingSize = existed ? static_cast<std::uint64_t>(std::filesystem::file_size(tempPath, fileEc)) : 0;
+						if (fileEc) {
+							fileEc.clear();
+						}
+
+						if (!sameTransfer && existed) {
+							std::filesystem::remove(tempPath, fileEc);
+							existingSize = 0;
+						}
+
+						if (!slot->out || !slot->out->is_open()) {
+							slot->out = std::make_unique<std::fstream>();
+							slot->out->open(tempPath, std::ios::binary | std::ios::in | std::ios::out);
+							if (!slot->out->is_open()) {
+								slot->out->clear();
+								slot->out->open(tempPath, std::ios::binary | std::ios::out | std::ios::trunc);
+								slot->out->close();
+								slot->out->open(tempPath, std::ios::binary | std::ios::in | std::ios::out);
+							}
+						}
+
+						if (!slot->out || !slot->out->is_open()) {
+							Logger::warn("transfer SEND ignored (temp open failed): " + tempPath.string());
+							continue;
+						}
+
+						resumeOffset = std::max(existingSize, *senderOffset);
+						if (resumeOffset > *fileSize) {
+							resumeOffset = *fileSize;
+						}
+
+						slot->written = resumeOffset;
+						slot->lastActivity = std::chrono::steady_clock::now();
+						state = slot;
+					}
+
+					if (!state || !state->out || !state->out->is_open()) {
+						Logger::warn("transfer SEND ignored (state unavailable): " + tempPath.string());
 						continue;
 					}
-					state.expectedSize = *fileSize;
-					state.expectedModifiedMs = *modifiedMs;
-					state.written = 0;
-					state.lastActivity = std::chrono::steady_clock::now();
 
-					std::lock_guard<std::mutex> lock(transferMutex);
-					incomingTransfers[transferKey(peerId, parts[1])] = std::move(state);
+					state->out->seekp(static_cast<std::streamoff>(resumeOffset), std::ios::beg);
+					if (!state->out->good()) {
+						Logger::warn("transfer SEND ignored (seek failed): " + tempPath.string());
+						continue;
+					}
+
+					const std::string responseType = resumeOffset > 0 ? "RESUME" : "READY";
+					if (!tcp.sendMessage(peerId, responseType + "|" + parts[1] + "|" + std::to_string(resumeOffset) +
+					                               "|" + std::to_string(*fileSize) + "|" + std::to_string(*modifiedMs))) {
+						Logger::warn("transfer SEND response failed: " + parts[1] + " <- " + peerId);
+						continue;
+					}
+
+					Logger::info("transfer send accepted: " + parts[1] + " <- " + peerId +
+					             " offset=" + std::to_string(resumeOffset) +
+					             " size=" + std::to_string(*fileSize));
 					continue;
 				}
 
@@ -563,34 +735,47 @@ int Application::run() {
 					const std::string key = transferKey(peerId, parts[1]);
 					std::lock_guard<std::mutex> lock(transferMutex);
 					auto it = incomingTransfers.find(key);
-					if (it == incomingTransfers.end()) {
+					if (it == incomingTransfers.end() || !it->second) {
 						continue;
 					}
 
-					auto& st = it->second;
-					if (!st.out || !st.out->is_open() || *offset != st.written) {
-						if (st.out && st.out->is_open()) {
-							st.out->close();
-						}
-						std::error_code rmEc;
-						std::filesystem::remove(st.tempPath, rmEc);
-						incomingTransfers.erase(it);
+					auto st = it->second;
+					if (!st.out || !st.out->is_open()) {
+						Logger::warn("transfer DATA ignored (stream closed): " + parts[1] + " <- " + peerId);
+						continue;
+					}
+
+					std::error_code diskEc;
+					const auto diskSize = std::filesystem::exists(st->tempPath, diskEc) && !diskEc
+						                      ? static_cast<std::uint64_t>(std::filesystem::file_size(st->tempPath, diskEc))
+						                      : st->written;
+					if (diskEc) {
+						diskEc.clear();
+					}
+
+					if (*offset < st->written) {
+						Logger::debug("transfer DATA duplicate chunk ignored: " + parts[1] + " <- " + peerId +
+						              " offset=" + std::to_string(*offset));
+						continue;
+					}
+					if (*offset != st->written && diskSize == *offset) {
+						st->out->seekp(static_cast<std::streamoff>(*offset), std::ios::beg);
+						st->written = *offset;
+					}
+					if (*offset != st->written) {
 						Logger::warn("transfer DATA aborted (offset/state mismatch): " + parts[1] + " <- " + peerId);
 						continue;
 					}
 
-					st.out->write(chunk->data(), static_cast<std::streamsize>(chunk->size()));
-					if (!st.out->good()) {
-						st.out->close();
-						std::error_code rmEc;
-						std::filesystem::remove(st.tempPath, rmEc);
-						incomingTransfers.erase(it);
+					st->out->write(chunk->data(), static_cast<std::streamsize>(chunk->size()));
+					if (!st->out->good()) {
+						st->out->close();
 						Logger::warn("transfer DATA aborted (write error): " + parts[1] + " <- " + peerId);
 						continue;
 					}
 
-					st.written += static_cast<std::uint64_t>(chunk->size());
-					st.lastActivity = std::chrono::steady_clock::now();
+					st->written += static_cast<std::uint64_t>(chunk->size());
+					st->lastActivity = std::chrono::steady_clock::now();
 					continue;
 				}
 
@@ -609,13 +794,13 @@ int Application::run() {
 					}
 
 					const std::string key = transferKey(peerId, parts[1]);
-					IncomingTransfer st;
+					std::shared_ptr<IncomingTransfer> st;
 					bool ok = false;
 					{
 						std::lock_guard<std::mutex> lock(transferMutex);
 						auto it = incomingTransfers.find(key);
-						if (it != incomingTransfers.end()) {
-							st = std::move(it->second);
+						if (it != incomingTransfers.end() && it->second) {
+							st = it->second;
 							incomingTransfers.erase(it);
 							ok = true;
 						}
@@ -624,35 +809,35 @@ int Application::run() {
 						continue;
 					}
 
-					if (!st.out || !st.out->is_open()) {
-						std::error_code rmEc;
-						std::filesystem::remove(st.tempPath, rmEc);
+					if (!st || !st->out || !st->out->is_open()) {
+						Logger::warn("transfer DONE ignored (stream closed): " + parts[1] + " <- " + peerId);
 						continue;
 					}
-					st.out->flush();
-					st.out->close();
+					st->out->flush();
+					st->out->close();
 
-					if (st.written != *fileSize || st.expectedSize != *fileSize) {
+					if (st->written != *fileSize || st->expectedSize != *fileSize) {
 						std::error_code rmEc;
-						std::filesystem::remove(st.tempPath, rmEc);
+						std::filesystem::remove(st->tempPath, rmEc);
 						Logger::warn("transfer DONE aborted (size mismatch): " + parts[1] + " <- " + peerId);
 						continue;
 					}
 
 					std::error_code ec;
-					if (std::filesystem::exists(st.targetPath, ec) && !ec) {
-						std::filesystem::remove(st.targetPath, ec);
+					if (std::filesystem::exists(st->targetPath, ec) && !ec) {
+						std::filesystem::remove(st->targetPath, ec);
 					}
-					std::filesystem::rename(st.tempPath, st.targetPath, ec);
+					std::filesystem::rename(st->tempPath, st->targetPath, ec);
 					if (ec) {
-						std::filesystem::remove(st.tempPath, ec);
-						Logger::warn("transfer DONE failed finalize: " + st.targetPath.string());
+						std::filesystem::remove(st->tempPath, ec);
+						Logger::warn("transfer DONE failed finalize: " + st->targetPath.string());
 						continue;
 					}
 
 					{
 						std::lock_guard<std::mutex> lock(transferMutex);
 						pendingDownloadRequests.erase(key);
+						incomingTransfers.erase(key);
 					}
 					Logger::info("transfer received: " + parts[1] + " <- " + peerId + " bytes=" +
 					             std::to_string(*fileSize));
