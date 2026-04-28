@@ -93,7 +93,7 @@ private:
 	std::thread transferDispatchThread_;
 	std::deque<std::string> events_;
 	std::unordered_map<std::string, FileEntry> lastSnapshot_;
-	std::unordered_map<std::string, HashCacheEntry> hashCache_;
+	mutable std::unordered_map<std::string, HashCacheEntry> hashCache_;
 	std::unordered_map<std::string, std::chrono::steady_clock::time_point> recentLocalChanges_;
 	std::chrono::milliseconds interval_{1500};
 	std::chrono::seconds loopPreventionWindow_{8};

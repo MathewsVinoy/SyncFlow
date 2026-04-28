@@ -34,7 +34,8 @@ int runProtocolRoundtripTest() {
 		return 1;
 	}
 	if (decoded->requestId != message.requestId || decoded->files.size() != 1 ||
-	    decoded->files.front().relativePath != "notes.txt") {
+	    decoded->files.front().relativePath != "notes.txt" ||
+	    decoded->files.front().hash != "abc") {
 		return 2;
 	}
 	return 0;

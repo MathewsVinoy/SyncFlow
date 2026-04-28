@@ -269,7 +269,9 @@ std::uint64_t RemoteSync::resolveTimestampConflict(
 std::string RemoteSync::getCachedOrComputeHash(const std::filesystem::path& file,
 	                                           std::uint64_t size,
 	                                           std::uint64_t modifiedTime) const {
-	const std::string key = std::filesystem::weakly_canonical(file).string();
+	std::error_code ec;
+	const auto canonical = std::filesystem::weakly_canonical(file, ec);
+	const std::string key = ec ? file.lexically_normal().string() : canonical.string();
 	{
 		std::lock_guard<std::mutex> lock(cacheMutex_);
 		auto it = hashCache_.find(key);

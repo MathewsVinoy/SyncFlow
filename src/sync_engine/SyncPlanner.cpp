@@ -28,7 +28,7 @@ std::vector<SyncAction> SyncPlanner::plan(
 			continue;
 		}
 
-		if (localFile.hash == remoteFile.hash && localFile.size == remoteFile.size) {
+		if (!localFile.hash.empty() && localFile.hash == remoteFile.hash) {
 			actions.push_back({ActionType::None, path, "already in sync"});
 			continue;
 		}
@@ -46,30 +46,34 @@ std::vector<SyncAction> SyncPlanner::plan(
 }
 
 SyncAction SyncPlanner::resolveBothPresent(const FileMetadata& localFile, const FileMetadata& remoteFile) const {
-	const auto delta = std::llabs(localFile.modifiedUnixSeconds - remoteFile.modifiedUnixSeconds);
-	if (config_.preferNewerTimestamp && delta > config_.clockSkewToleranceSeconds) {
-		if (localFile.modifiedUnixSeconds > remoteFile.modifiedUnixSeconds) {
-			return {ActionType::Upload, localFile.relativePath, "newer local timestamp"};
+	if (localFile.hash != remoteFile.hash) {
+		const auto delta = std::llabs(localFile.modifiedUnixSeconds - remoteFile.modifiedUnixSeconds);
+		if (config_.preferNewerTimestamp && delta > config_.clockSkewToleranceSeconds) {
+			if (localFile.modifiedUnixSeconds > remoteFile.modifiedUnixSeconds) {
+				return {ActionType::Upload, localFile.relativePath, "newer local content timestamp"};
+			}
+			return {ActionType::Download, localFile.relativePath, "newer remote content timestamp"};
 		}
-		return {ActionType::Download, localFile.relativePath, "newer remote timestamp"};
-	}
 
-	if (localFile.lastEditorDeviceId == remoteFile.lastEditorDeviceId) {
-		if (localFile.modifiedUnixSeconds >= remoteFile.modifiedUnixSeconds) {
-			return {ActionType::Upload, localFile.relativePath, "same editor, local wins"};
+		if (localFile.lastEditorDeviceId == remoteFile.lastEditorDeviceId) {
+			if (localFile.modifiedUnixSeconds >= remoteFile.modifiedUnixSeconds) {
+				return {ActionType::Upload, localFile.relativePath, "same editor, local content wins"};
+			}
+			return {ActionType::Download, localFile.relativePath, "same editor, remote content wins"};
 		}
-		return {ActionType::Download, localFile.relativePath, "same editor, remote wins"};
+
+		if (localDeviceId_ < remoteFile.lastEditorDeviceId) {
+			return {ActionType::Upload, localFile.relativePath, "content conflict tiebreaker local wins"};
+		}
+
+		if (localDeviceId_ > remoteFile.lastEditorDeviceId) {
+			return {ActionType::Download, localFile.relativePath, "content conflict tiebreaker remote wins"};
+		}
+
+		return {ActionType::ConflictKeepBoth, localFile.relativePath, "content conflict keep both"};
 	}
 
-	if (localDeviceId_ < remoteFile.lastEditorDeviceId) {
-		return {ActionType::Upload, localFile.relativePath, "device id tiebreaker local wins"};
-	}
-
-	if (localDeviceId_ > remoteFile.lastEditorDeviceId) {
-		return {ActionType::Download, localFile.relativePath, "device id tiebreaker remote wins"};
-	}
-
-	return {ActionType::ConflictKeepBoth, localFile.relativePath, "unresolvable conflict"};
+	return {ActionType::None, localFile.relativePath, "hashes match"};
 }
 
 SyncAction SyncPlanner::resolveDeleted(const FileMetadata& localFile, const FileMetadata& remoteFile) const {

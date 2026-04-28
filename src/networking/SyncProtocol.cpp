@@ -140,6 +140,8 @@ std::optional<SyncMessage> decode(const std::string& raw) {
 
 		FileMetadata metadata;
 		metadata.relativePath = fields[0];
+		metadata.size = 0;
+		metadata.modifiedUnixSeconds = 0;
 		metadata.hash = fields[3];
 		metadata.lastEditorDeviceId = fields[4];
 		try {

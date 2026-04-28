@@ -37,6 +37,7 @@ void handleStopSignal(int) {
 struct BasicFileMetadata {
 	std::uint64_t size = 0;
 	std::uint64_t modifiedMs = 0;
+	std::string hash;
 };
 
 struct IncomingTransfer {
@@ -70,7 +71,7 @@ MetadataSnapshot buildLocalSnapshot(const std::filesystem::path& syncFolder, syn
 		if (file.isDirectory) {
 			continue;
 		}
-		snapshot[file.path] = BasicFileMetadata{file.size, file.lastModifiedTime};
+		snapshot[file.path] = BasicFileMetadata{file.size, file.lastModifiedTime, file.hash};
 	}
 	return snapshot;
 }
@@ -85,7 +86,7 @@ std::string serializeSnapshot(const MetadataSnapshot& snapshot) {
 		if (!entries.empty()) {
 			entries.push_back(',');
 		}
-		entries += path + ":" + std::to_string(meta.size) + ":" + std::to_string(meta.modifiedMs);
+		entries += path + ":" + std::to_string(meta.size) + ":" + std::to_string(meta.modifiedMs) + ":" + meta.hash;
 	}
 	return entries;
 }
@@ -133,19 +134,24 @@ bool parseFilesMessage(const std::string& payload,
 		if (secondLastColon == std::string::npos) {
 			continue;
 		}
+		const std::size_t thirdLastColon = token.rfind(':', secondLastColon - 1);
+		if (thirdLastColon == std::string::npos) {
+			continue;
+		}
 
-		const std::string path = token.substr(0, secondLastColon);
+		const std::string path = token.substr(0, thirdLastColon);
 		if (path.empty()) {
 			continue;
 		}
 
-		auto size = parseUnsigned64(token.substr(secondLastColon + 1, lastColon - secondLastColon - 1));
-		auto modified = parseUnsigned64(token.substr(lastColon + 1));
-		if (!size.has_value() || !modified.has_value()) {
+		auto size = parseUnsigned64(token.substr(thirdLastColon + 1, secondLastColon - thirdLastColon - 1));
+		auto modified = parseUnsigned64(token.substr(secondLastColon + 1, lastColon - secondLastColon - 1));
+		const std::string hash = token.substr(lastColon + 1);
+		if (!size.has_value() || !modified.has_value() || hash.empty()) {
 			continue;
 		}
 
-		parsedSnapshot[path] = BasicFileMetadata{*size, *modified};
+		parsedSnapshot[path] = BasicFileMetadata{*size, *modified, hash};
 	}
 
 	return true;
@@ -162,16 +168,16 @@ void logSyncDecisions(const std::string& remoteDeviceId,
 		}
 
 		const auto& remote = it->second;
-		if (local.size == remote.size && local.modifiedMs == remote.modifiedMs) {
+		if (!local.hash.empty() && local.hash == remote.hash) {
 			continue;
 		}
 
 		if (local.modifiedMs > remote.modifiedMs) {
-			Logger::info("sync decision [upload updated]: " + path + " -> " + remoteDeviceId);
+			Logger::info("sync decision [upload content-changed]: " + path + " -> " + remoteDeviceId);
 		} else if (remote.modifiedMs > local.modifiedMs) {
-			Logger::info("sync decision [download updated]: " + path + " <- " + remoteDeviceId);
+			Logger::info("sync decision [download content-changed]: " + path + " <- " + remoteDeviceId);
 		} else {
-			Logger::info("sync decision [update conflict-size]: " + path + " <-> " + remoteDeviceId);
+			Logger::info("sync decision [conflict content mismatch]: " + path + " <-> " + remoteDeviceId);
 		}
 	}
 
@@ -693,6 +699,9 @@ int Application::run() {
 						continue;
 					}
 					const auto& remote = rit->second;
+					if (!local.hash.empty() && local.hash == remote.hash) {
+						continue;
+					}
 					if (local.modifiedMs > remote.modifiedMs) {
 						enqueueSendFile(peerId, path);
 					} else if (remote.modifiedMs > local.modifiedMs) {
