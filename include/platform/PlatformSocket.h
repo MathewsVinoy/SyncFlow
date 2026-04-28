@@ -12,6 +12,8 @@ using SocketHandle = SOCKET;
 using SocketLen = int;
 constexpr SocketHandle INVALID_SOCKET_HANDLE = INVALID_SOCKET;
 #else
+#include <sys/socket.h>
+#include <sys/types.h>
 using SocketHandle = int;
 using SocketLen = socklen_t;
 constexpr SocketHandle INVALID_SOCKET_HANDLE = -1;

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -9,7 +11,12 @@ class ConfigManager {
 public:
 	using Value = std::variant<std::string, std::int64_t>;
 
-	bool load(const std::string& filePath = "config.json");
+	// Load from specified path or use platform-specific config directory
+	bool load(const std::string& filePath = "");
+	
+	// Load from platform-specific config directory
+	bool loadFromConfigDir(const std::string& filename = "config.json");
+
 	bool has(const std::string& key) const;
 
 	std::string getString(const std::string& key, const std::string& defaultValue = "") const;
@@ -17,4 +24,7 @@ public:
 
 private:
 	std::unordered_map<std::string, Value> data_;
+	
+	// Try to resolve file path in standard locations
+	std::optional<std::filesystem::path> resolveConfigPath(const std::string& filePath);
 };
