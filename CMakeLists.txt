@@ -4,12 +4,35 @@ if(POLICY CMP0135)
 	cmake_policy(SET CMP0135 NEW)
 endif()
 
-project(syncflow LANGUAGES CXX)
+project(syncflow
+	VERSION 1.0.0
+	DESCRIPTION "Cross-platform file synchronization application"
+	HOMEPAGE_URL "https://github.com/yourusername/syncflow"
+	LANGUAGES CXX
+)
+
+# Platform detection
+if(WIN32)
+	set(SYNCFLOW_PLATFORM "Windows")
+elseif(APPLE)
+	set(SYNCFLOW_PLATFORM "macOS")
+elseif(UNIX AND NOT APPLE)
+	set(SYNCFLOW_PLATFORM "Linux")
+else()
+	set(SYNCFLOW_PLATFORM "Unknown")
+endif()
+
+message(STATUS "Syncflow: Detected platform: ${SYNCFLOW_PLATFORM}")
 
 # C++ standard setup (C++17 or C++20 requested, defaulting to C++20)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Binary output directories
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT SYNCFLOW_IPO_SUPPORTED OUTPUT SYNCFLOW_IPO_ERROR)
