@@ -160,6 +160,9 @@ bool ResumableTransferManager::completeTransfer(const std::string& transferId,
                                                const std::string& expectedHash) const {
 	Logger::info("ResumableTransferManager: Completing transfer - " + transferId);
 
+	(void)verifyChecksum;
+	(void)expectedHash;
+
 	auto state = loadTransferState(transferId);
 	if (!state) {
 		Logger::error("ResumableTransferManager: Cannot complete unknown transfer - " + transferId);
@@ -247,7 +250,6 @@ std::size_t ResumableTransferManager::cleanupStaleTransfers(int retentionDays) c
 	             std::to_string(retentionDays) + " days)");
 
 	std::size_t cleanedCount = 0;
-	const auto now = std::filesystem::file_time_type::clock::now();
 	const auto retentionPeriod =
 		std::chrono::hours(24 * retentionDays);
 

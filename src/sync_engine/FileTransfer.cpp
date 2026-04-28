@@ -7,8 +7,8 @@
 #include <sstream>
 #include <system_error>
 
-// OpenSSL for SHA256
-#include <openssl/sha.h>
+// OpenSSL for SHA256 (use EVP API)
+#include <openssl/evp.h>
 
 namespace syncflow::engine {
 
@@ -230,21 +230,40 @@ std::string FileTransfer::calculateFileHash(const std::filesystem::path& file) c
 		return "";
 	}
 
-	unsigned char hash[SHA256_DIGEST_LENGTH];
-	SHA256_CTX sha256;
-	SHA256_Init(&sha256);
+	unsigned char hash[EVP_MAX_MD_SIZE];
+	unsigned int hashLen = 0;
+
+	EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+	if (!mdctx) {
+		Logger::error("FileTransfer: Failed to create EVP_MD_CTX for hashing - " + file.string());
+		return std::string();
+	}
+	if (EVP_DigestInit_ex(mdctx, EVP_sha256(), nullptr) != 1) {
+		EVP_MD_CTX_free(mdctx);
+		Logger::error("FileTransfer: EVP_DigestInit_ex failed - " + file.string());
+		return std::string();
+	}
 
 	std::array<char, 65536> buffer{};
 	while (in.read(buffer.data(), buffer.size()) || in.gcount() > 0) {
-		SHA256_Update(&sha256, buffer.data(), in.gcount());
+		if (EVP_DigestUpdate(mdctx, buffer.data(), static_cast<size_t>(in.gcount())) != 1) {
+			EVP_MD_CTX_free(mdctx);
+			Logger::error("FileTransfer: EVP_DigestUpdate failed - " + file.string());
+			return std::string();
+		}
 	}
 
-	SHA256_Final(hash, &sha256);
+	if (EVP_DigestFinal_ex(mdctx, hash, &hashLen) != 1) {
+		EVP_MD_CTX_free(mdctx);
+		Logger::error("FileTransfer: EVP_DigestFinal_ex failed - " + file.string());
+		return std::string();
+	}
+	EVP_MD_CTX_free(mdctx);
 
 	// Convert hash to hex string
 	std::ostringstream hashStream;
-	for (unsigned char byte : hash) {
-		hashStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+	for (unsigned int i = 0; i < hashLen; ++i) {
+		hashStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
 	}
 
 	const auto hashStr = hashStream.str();

@@ -1,6 +1,7 @@
 #include "core/Application.h"
 
 #include "core/Logger.h"
+#include "core/ThreadPool.h"
 #include "networking/DeviceDiscovery.h"
 #include "networking/TcpHandshake.h"
 
@@ -335,11 +336,21 @@ int Application::run() {
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
 	const std::string mirrorFolder = config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror");
 	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
+	unsigned int hwThreads = std::thread::hardware_concurrency();
+	if (hwThreads == 0) {
+		hwThreads = 4;
+	}
+	int transferWorkerThreads =
+		config_.getInt("transfer_worker_threads", static_cast<int>(hwThreads));
+	if (transferWorkerThreads < 1) {
+		transferWorkerThreads = 1;
+	}
 	if (broadcastIntervalMs < 200) {
 		broadcastIntervalMs = 200;
 	}
 	Logger::info("Configured port: " + std::to_string(configuredPort));
 	Logger::info("Broadcast interval (ms): " + std::to_string(broadcastIntervalMs));
+	Logger::info("Transfer worker threads: " + std::to_string(transferWorkerThreads));
 	Logger::info("Discovery is using broadcast probe routing and TCP verification");
 	Logger::info("Sync source folder: " + syncFolder);
 	Logger::info("Sync mirror folder: " + mirrorFolder);
@@ -380,6 +391,7 @@ int Application::run() {
 	std::unordered_map<std::string, std::shared_ptr<OutboundTransfer>> outboundTransfers;
 	std::unordered_set<std::string> outboundInProgress;
 	std::unordered_set<std::string> pendingDownloadRequests;
+	ThreadPool transferWorkerPool(static_cast<std::size_t>(transferWorkerThreads));
 
 	g_keepRunning.store(true);
 	std::signal(SIGINT, handleStopSignal);
@@ -414,6 +426,7 @@ int Application::run() {
 	                           &outboundInProgress,
 	                           &pendingDownloadRequests,
 	                           &outboundTransfers,
+	                           &transferWorkerPool,
 	                           &syncFolder]() {
 		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
@@ -433,7 +446,8 @@ int Application::run() {
 				outboundInProgress.insert(key);
 			}
 
-			std::thread([&, peerId, relPath, key]() {
+			try {
+				(void)transferWorkerPool.enqueue([&, peerId, relPath, key]() {
 				auto release = [&](bool keepState = false) {
 					std::lock_guard<std::mutex> lock(transferMutex);
 					outboundInProgress.erase(key);
@@ -543,7 +557,13 @@ int Application::run() {
 				Logger::info("transfer sent: " + relPath + " -> " + peerId + " bytes=" + std::to_string(fileSize) +
 				             " resume=" + std::to_string(resumeOffset));
 				release();
-			}).detach();
+				});
+			} catch (const std::exception& ex) {
+				Logger::warn("transfer queue rejected: " + relPath + " -> " + peerId + " reason=" + ex.what());
+				std::lock_guard<std::mutex> lock(transferMutex);
+				outboundInProgress.erase(key);
+				outboundTransfers.erase(key);
+			}
 		};
 
 		while (g_keepRunning.load()) {
@@ -741,7 +761,7 @@ int Application::run() {
 					}
 
 					auto st = it->second;
-					if (!st.out || !st.out->is_open()) {
+					if (!st || !st->out || !st->out->is_open()) {
 						Logger::warn("transfer DATA ignored (stream closed): " + parts[1] + " <- " + peerId);
 						continue;
 					}
@@ -930,22 +950,22 @@ int Application::run() {
 				std::vector<std::string> expiredKeys;
 				{
 					std::lock_guard<std::mutex> lock(transferMutex);
-					for (const auto& [k, st] : incomingTransfers) {
-						if (now - st.lastActivity > std::chrono::seconds(30)) {
-							expiredKeys.push_back(k);
-						}
-					}
-					for (const auto& k : expiredKeys) {
-						auto it = incomingTransfers.find(k);
-						if (it != incomingTransfers.end()) {
-							if (it->second.out && it->second.out->is_open()) {
-								it->second.out->close();
+						for (const auto& [k, st] : incomingTransfers) {
+							if (st && now - st->lastActivity > std::chrono::seconds(30)) {
+								expiredKeys.push_back(k);
 							}
-							std::error_code rmEc;
-							std::filesystem::remove(it->second.tempPath, rmEc);
-							incomingTransfers.erase(it);
 						}
-					}
+						for (const auto& k : expiredKeys) {
+							auto it = incomingTransfers.find(k);
+							if (it != incomingTransfers.end() && it->second) {
+								if (it->second->out && it->second->out->is_open()) {
+									it->second->out->close();
+								}
+								std::error_code rmEc;
+								std::filesystem::remove(it->second->tempPath, rmEc);
+								incomingTransfers.erase(it);
+							}
+						}
 				}
 				nextTransferSweep = now + std::chrono::seconds(5);
 			}
@@ -1044,11 +1064,13 @@ int Application::run() {
 					std::lock_guard<std::mutex> lock(transferMutex);
 					for (auto it = incomingTransfers.begin(); it != incomingTransfers.end();) {
 						if (it->first.rfind(peer.deviceId + "|", 0) == 0) {
-							if (it->second.out && it->second.out->is_open()) {
-								it->second.out->close();
+							if (it->second && it->second->out && it->second->out->is_open()) {
+								it->second->out->close();
 							}
 							std::error_code rmEc;
-							std::filesystem::remove(it->second.tempPath, rmEc);
+							if (it->second) {
+								std::filesystem::remove(it->second->tempPath, rmEc);
+							}
 							it = incomingTransfers.erase(it);
 						} else {
 							++it;
