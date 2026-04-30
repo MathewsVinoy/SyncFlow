@@ -159,11 +159,15 @@ int runRemoteSyncTest() {
 	std::filesystem::remove_all(tmpDir);
 	std::filesystem::create_directories(tmpDir / "device1");
 	std::filesystem::create_directories(tmpDir / "device2");
+	std::filesystem::create_directories(tmpDir / "device1" / "nested" / "empty_dir");
 	
 	// Create test files on device1
 	std::ofstream f1(tmpDir / "device1" / "file1.txt");
 	f1 << "content1";
 	f1.close();
+	std::ofstream f1nested(tmpDir / "device1" / "nested" / "inner.txt");
+	f1nested << "nested-content";
+	f1nested.close();
 	
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	
@@ -181,22 +185,38 @@ int runRemoteSyncTest() {
 		std::cout << "RemoteSync test failed: no metadata collected\n";
 		return 1;
 	}
+
+	bool sawNestedDir = false;
+	for (const auto& entry : meta1) {
+		if (entry.path == "nested" && entry.isDirectory) {
+			sawNestedDir = true;
+			break;
+		}
+	}
+	if (!sawNestedDir) {
+		std::cout << "RemoteSync test failed: directory metadata missing\n";
+		return 1;
+	}
 	
 	// Compare and plan sync
 	auto plan = sync.compareMeta(meta1, meta2, tmpDir / "device1");
 	
 	// We expect: file1.txt from device1 to upload, file2.txt from device2 to download
 	bool hasDownloadFile2 = false;
+	bool hasCreateRemoteDir = false;
 	for (const auto& p : plan) {
 		if (p.remotePath == "file2.txt" && 
 		    p.action == syncflow::engine::RemoteSyncAction::DownloadFile) {
 			hasDownloadFile2 = true;
 			break;
 		}
+		if (p.localPath == "nested" && p.action == syncflow::engine::RemoteSyncAction::CreateRemoteDir) {
+			hasCreateRemoteDir = true;
+		}
 	}
 	
-	if (!hasDownloadFile2) {
-		std::cout << "RemoteSync test failed: expected DOWNLOAD plan for file2.txt\n";
+	if (!hasDownloadFile2 || !hasCreateRemoteDir) {
+		std::cout << "RemoteSync test failed: expected download and directory-create plans\n";
 		return 1;
 	}
 	

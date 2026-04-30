@@ -142,16 +142,28 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 		auto it = remoteMap.find(localPath);
 		
 		if (it == remoteMap.end()) {
-			// File exists locally but not on remote → upload
-			SyncPlan plan{
-				.action = RemoteSyncAction::UploadFile,
-				.localPath = localPath,
-				.remotePath = localPath,
-				.localInfo = localInfo,
-				.remoteInfo = RemoteFileInfo{}
-			};
-			plans.push_back(plan);
-			Logger::info("sync plan UPLOAD: " + localPath);
+			if (localInfo.isDirectory) {
+				SyncPlan plan{
+					.action = RemoteSyncAction::CreateRemoteDir,
+					.localPath = localPath,
+					.remotePath = localPath,
+					.localInfo = localInfo,
+					.remoteInfo = RemoteFileInfo{}
+				};
+				plans.push_back(plan);
+				Logger::info("sync plan CREATE_REMOTE_DIR: " + localPath);
+			} else {
+				// File exists locally but not on remote → upload
+				SyncPlan plan{
+					.action = RemoteSyncAction::UploadFile,
+					.localPath = localPath,
+					.remotePath = localPath,
+					.localInfo = localInfo,
+					.remoteInfo = RemoteFileInfo{}
+				};
+				plans.push_back(plan);
+				Logger::info("sync plan UPLOAD: " + localPath);
+			}
 		} else {
 			// File exists on both sides
 			const auto& remoteInfo = it->second;
@@ -205,16 +217,28 @@ std::vector<SyncPlan> RemoteSync::compareMeta(
 		auto it = localMap.find(remotePath);
 		
 		if (it == localMap.end()) {
-			// File exists on remote but not locally → download
-			SyncPlan plan{
-				.action = RemoteSyncAction::DownloadFile,
-				.localPath = remotePath,
-				.remotePath = remotePath,
-				.localInfo = RemoteFileInfo{},
-				.remoteInfo = remoteInfo
-			};
-			plans.push_back(plan);
-			Logger::info("sync plan DOWNLOAD: " + remotePath);
+			if (remoteInfo.isDirectory) {
+				SyncPlan plan{
+					.action = RemoteSyncAction::CreateLocalDir,
+					.localPath = remotePath,
+					.remotePath = remotePath,
+					.localInfo = RemoteFileInfo{},
+					.remoteInfo = remoteInfo
+				};
+				plans.push_back(plan);
+				Logger::info("sync plan CREATE_LOCAL_DIR: " + remotePath);
+			} else {
+				// File exists on remote but not locally → download
+				SyncPlan plan{
+					.action = RemoteSyncAction::DownloadFile,
+					.localPath = remotePath,
+					.remotePath = remotePath,
+					.localInfo = RemoteFileInfo{},
+					.remoteInfo = remoteInfo
+				};
+				plans.push_back(plan);
+				Logger::info("sync plan DOWNLOAD: " + remotePath);
+			}
 		}
 	}
 	
