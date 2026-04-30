@@ -5,6 +5,8 @@
 #include "networking/DeviceDiscovery.h"
 #include "networking/TcpHandshake.h"
 
+#include "platform/PlatformPaths.h"
+
 #include "security/AuthManager.h"
 
 #include "sync_engine/RemoteSync.h"
@@ -283,12 +285,26 @@ std::string tempTransferPath(const std::filesystem::path& targetPath, const std:
 }  // namespace
 
 bool Application::init() {
+	platform::PlatformPaths::initialize("syncflow");
+
 	const bool configLoaded = config_.load();
 
-	const std::string logFolder = config_.getString("log_folder", "log");
+	const std::string appName = config_.getString("app_name", "SyncFlow");
+	platform::PlatformPaths::initialize(appName);
+
+	auto defaultLogDir = platform::PlatformPaths::getLogDir().value_or(std::filesystem::path("log"));
+	auto defaultDataDir = platform::PlatformPaths::getDataDir().value_or(std::filesystem::path("syncflow_data"));
+	auto defaultSyncDir = defaultDataDir / "sync";
+
+	auto configuredLogFolder = config_.getString("log_folder", defaultLogDir.string());
+	std::filesystem::path logFolder(configuredLogFolder);
+	if (!logFolder.is_absolute()) {
+		logFolder = std::filesystem::absolute(logFolder);
+	}
+
 	const std::string logLevel = config_.getString("log_level", "info");
 	const bool syncDataOnlyLogs = config_.getInt("sync_data_only_logs", 0) != 0;
-	Logger::init(logFolder);
+	Logger::init(logFolder.string());
 	Logger::setLevel(logLevel);
 	Logger::setSyncDataOnly(syncDataOnlyLogs);
 
@@ -296,10 +312,13 @@ bool Application::init() {
 		Logger::warn("config.json could not be loaded; using defaults");
 	}
 
-	const std::string appName = config_.getString("app_name", "SyncFlow");
 	const std::string deviceName = config_.getString("device_name", "unknown-device");
 	const int configuredPort = config_.getInt("port", 8080);
-	const std::string syncFolder = config_.getString("sync_folder", "./sync");
+	std::filesystem::path syncFolderPath(config_.getString("sync_folder", defaultSyncDir.string()));
+	if (!syncFolderPath.is_absolute()) {
+		syncFolderPath = std::filesystem::absolute(syncFolderPath);
+	}
+	const std::string syncFolder = syncFolderPath.string();
 	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 
 	Logger::info("Application initialized");
@@ -308,7 +327,9 @@ bool Application::init() {
 	Logger::info("port: " + std::to_string(configuredPort));
 	Logger::info("sync_folder: " + syncFolder);
 	Logger::info("log_level: " + logLevel);
-	Logger::info("mirror_folder: " + config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror"));
+	const std::filesystem::path mirrorFolderPath = std::filesystem::path(config_.getString(
+		"mirror_folder", (syncFolderPath / ".syncflow_mirror").string()));
+	Logger::info("mirror_folder: " + mirrorFolderPath.string());
 	if (securitySecret == "change-me-in-production") {
 		Logger::warn("security_shared_secret is using default value; update it for production");
 	}
@@ -334,7 +355,15 @@ int Application::run() {
 	const int configuredPort = config_.getInt("port", 8080);
 	int broadcastIntervalMs = config_.getInt("broadcast_interval_ms", 2000);
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
-	const std::string mirrorFolder = config_.getString("mirror_folder", syncFolder + "/.syncflow_mirror");
+	std::filesystem::path syncFolderPath(syncFolder);
+	if (!syncFolderPath.is_absolute()) {
+		syncFolderPath = std::filesystem::absolute(syncFolderPath);
+	}
+	std::filesystem::path mirrorFolderPathRun(config_.getString("mirror_folder", (syncFolderPath / ".syncflow_mirror").string()));
+	if (!mirrorFolderPathRun.is_absolute()) {
+		mirrorFolderPathRun = std::filesystem::absolute(mirrorFolderPathRun);
+	}
+	const std::string mirrorFolder = mirrorFolderPathRun.string();
 	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 	unsigned int hwThreads = std::thread::hardware_concurrency();
 	if (hwThreads == 0) {

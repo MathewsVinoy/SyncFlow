@@ -13,14 +13,16 @@
 
 namespace platform {
 
-std::string PlatformPaths::appName_;
+std::string PlatformPaths::appName_ = "syncflow";
 std::optional<std::filesystem::path> PlatformPaths::configDir_;
 std::optional<std::filesystem::path> PlatformPaths::logDir_;
 std::optional<std::filesystem::path> PlatformPaths::dataDir_;
 std::optional<std::filesystem::path> PlatformPaths::cacheDir_;
 
 void PlatformPaths::initialize(const std::string& appName) {
-	appName_ = appName;
+	if (!appName.empty()) {
+		appName_ = appName;
+	}
 }
 
 std::optional<std::filesystem::path> PlatformPaths::getHomeDir() {
@@ -149,7 +151,12 @@ std::optional<std::filesystem::path> PlatformPaths::getCacheDir() {
 }
 
 std::optional<std::filesystem::path> PlatformPaths::getTempDir() {
-	return getCacheDir();
+	std::error_code ec;
+	auto temp = std::filesystem::temp_directory_path(ec);
+	if (ec) {
+		return getCacheDir();
+	}
+	return temp / appName_;
 }
 
 std::filesystem::path PlatformPaths::getConfigFile(const std::string& filename) {

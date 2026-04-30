@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,6 +28,12 @@ namespace platform {
  */
 class PlatformSocket {
 public:
+	struct Datagram {
+		std::string address;
+		std::uint16_t port = 0;
+		std::vector<std::uint8_t> data;
+	};
+
 	PlatformSocket();
 	~PlatformSocket();
 
@@ -59,6 +66,7 @@ public:
 	// Configuration
 	bool setNonBlocking(bool nonBlocking);
 	bool setReuseAddress(bool reuse);
+	bool setBroadcast(bool broadcast);
 	bool setKeepAlive(bool keepAlive);
 	bool setTimeout(int timeoutMs);
 
@@ -71,6 +79,9 @@ public:
 	// Utility
 	static std::optional<std::string> getHostname();
 	static std::optional<std::vector<std::string>> getLocalAddresses();
+	std::optional<Datagram> receiveFrom(std::size_t maxBytes, int timeoutMs = -1);
+	bool sendTo(const std::string& address, std::uint16_t port, const std::string& data);
+	bool sendTo(const std::string& address, std::uint16_t port, const std::vector<std::uint8_t>& data);
 
 	SocketHandle handle() const { return socket_; }
 	bool isValid() const { return socket_ != INVALID_SOCKET_HANDLE; }
@@ -82,6 +93,7 @@ private:
 	SocketHandle socket_ = INVALID_SOCKET_HANDLE;
 
 	static int refCount_;
+	static std::mutex refMutex_;
 };
 
 }  // namespace platform

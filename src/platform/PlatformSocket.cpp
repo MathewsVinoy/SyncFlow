@@ -25,6 +25,7 @@
 namespace platform {
 
 int PlatformSocket::refCount_ = 0;
+std::mutex PlatformSocket::refMutex_;
 
 PlatformSocket::PlatformSocket() = default;
 
@@ -50,6 +51,7 @@ PlatformSocket::~PlatformSocket() {
 
 bool PlatformSocket::initializeSocketSystem() {
 #ifdef _WIN32
+	std::lock_guard<std::mutex> lock(refMutex_);
 	WSADATA wsaData{};
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 		Logger::error("PlatformSocket: WSAStartup failed");
@@ -62,6 +64,7 @@ bool PlatformSocket::initializeSocketSystem() {
 
 void PlatformSocket::shutdownSocketSystem() {
 #ifdef _WIN32
+	std::lock_guard<std::mutex> lock(refMutex_);
 	if (refCount_ > 0) {
 		refCount_--;
 		if (refCount_ == 0) {
@@ -288,6 +291,20 @@ bool PlatformSocket::setReuseAddress(bool reuse) {
 	return true;
 }
 
+bool PlatformSocket::setBroadcast(bool broadcast) {
+	if (!isValid()) {
+		return false;
+	}
+
+	int opt = broadcast ? 1 : 0;
+	if (setsockopt(socket_, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&opt), sizeof(opt)) < 0) {
+		Logger::error("PlatformSocket: Failed to set SO_BROADCAST");
+		return false;
+	}
+
+	return true;
+}
+
 bool PlatformSocket::setKeepAlive(bool keepAlive) {
 	if (!isValid()) {
 		return false;
@@ -415,6 +432,67 @@ std::optional<std::vector<std::string>> PlatformSocket::getLocalAddresses() {
 	}
 
 	return addresses;
+}
+
+std::optional<PlatformSocket::Datagram> PlatformSocket::receiveFrom(std::size_t maxBytes, int timeoutMs) {
+	if (!isValid()) {
+		return std::nullopt;
+	}
+
+	if (timeoutMs >= 0 && !setTimeout(timeoutMs)) {
+		return std::nullopt;
+	}
+
+	std::vector<std::uint8_t> buffer(maxBytes);
+	sockaddr_in sender{};
+	SocketLen senderLen = static_cast<SocketLen>(sizeof(sender));
+	const int received = ::recvfrom(socket_, reinterpret_cast<char*>(buffer.data()), static_cast<int>(maxBytes), 0,
+	                               reinterpret_cast<struct sockaddr*>(&sender), &senderLen);
+	if (received <= 0) {
+		return std::nullopt;
+	}
+
+	char ipBuffer[INET_ADDRSTRLEN] = {0};
+	const char* ip = inet_ntop(AF_INET, &sender.sin_addr, ipBuffer, INET_ADDRSTRLEN);
+	if (ip == nullptr) {
+		return std::nullopt;
+	}
+
+	buffer.resize(static_cast<std::size_t>(received));
+	return Datagram{std::string(ip), ntohs(sender.sin_port), std::move(buffer)};
+}
+
+bool PlatformSocket::sendTo(const std::string& address, std::uint16_t port, const std::vector<std::uint8_t>& data) {
+	if (!isValid()) {
+		Logger::error("PlatformSocket: Attempt to sendTo on invalid socket");
+		return false;
+	}
+
+	struct sockaddr_in addr {};
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(port);
+	if (inet_pton(AF_INET, address.c_str(), &addr.sin_addr) != 1) {
+		Logger::error("PlatformSocket: Invalid address: " + address);
+		return false;
+	}
+
+	std::size_t sent = 0;
+	while (sent < data.size()) {
+		const int rc = ::sendto(socket_, reinterpret_cast<const char*>(data.data() + sent),
+		                        static_cast<int>(data.size() - sent), 0,
+		                        reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+		if (rc <= 0) {
+			Logger::error("PlatformSocket: sendTo failed");
+			return false;
+		}
+		sent += static_cast<std::size_t>(rc);
+	}
+
+	return true;
+}
+
+bool PlatformSocket::sendTo(const std::string& address, std::uint16_t port, const std::string& data) {
+	return sendTo(address, port, std::vector<std::uint8_t>(data.begin(), data.end()));
 }
 
 void PlatformSocket::close() {

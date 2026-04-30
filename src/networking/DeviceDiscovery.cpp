@@ -1,6 +1,7 @@
 #include "networking/DeviceDiscovery.h"
 
 #include "core/Logger.h"
+#include "platform/PlatformSocket.h"
 
 #include <array>
 #include <algorithm>
@@ -12,75 +13,8 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#ifdef _MSC_VER
-#pragma comment(lib, "Ws2_32.lib")
-#endif
-#else
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
-
 namespace {
 constexpr const char* kResponsePrefix = "SYNCFLOW";
-
-#ifdef _WIN32
-using SocketHandle = SOCKET;
-using SocketLen = int;
-constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
-#else
-using SocketHandle = int;
-using SocketLen = socklen_t;
-constexpr SocketHandle kInvalidSocket = -1;
-#endif
-
-void closeSocket(SocketHandle socketFd) {
-#ifdef _WIN32
-	closesocket(socketFd);
-#else
-	close(socketFd);
-#endif
-}
-
-#ifdef _WIN32
-std::mutex g_winsockMutex;
-int g_winsockRefCount = 0;
-#endif
-
-bool initSockets() {
-#ifdef _WIN32
-	std::lock_guard<std::mutex> lock(g_winsockMutex);
-	if (g_winsockRefCount == 0) {
-		WSADATA wsaData{};
-		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-			return false;
-		}
-	}
-	++g_winsockRefCount;
-	return true;
-#else
-	return true;
-#endif
-}
-
-void shutdownSockets() {
-#ifdef _WIN32
-	std::lock_guard<std::mutex> lock(g_winsockMutex);
-	if (g_winsockRefCount > 0) {
-		--g_winsockRefCount;
-		if (g_winsockRefCount == 0) {
-			WSACleanup();
-		}
-	}
-#endif
-}
 
 bool isDigitsOnly(const std::string& value) {
 	if (value.empty()) {
@@ -94,102 +28,10 @@ bool isDigitsOnly(const std::string& value) {
 	return true;
 }
 
-bool isValidIpv4(const std::string& ip) {
-	in_addr addr{};
-	return inet_pton(AF_INET, ip.c_str(), &addr) == 1;
-}
-
-std::string localIpForRemote(const sockaddr_in& remoteAddr) {
-	const SocketHandle fd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (fd == kInvalidSocket) {
-		return {};
-	}
-
-	sockaddr_in remote = remoteAddr;
-	if (connect(fd, reinterpret_cast<const sockaddr*>(&remote), static_cast<SocketLen>(sizeof(remote))) < 0) {
-		closeSocket(fd);
-		return {};
-	}
-
-	sockaddr_in local{};
-	SocketLen localLen = static_cast<SocketLen>(sizeof(local));
-	if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &localLen) < 0) {
-		closeSocket(fd);
-		return {};
-	}
-
-	char ipBuffer[INET_ADDRSTRLEN] = {0};
-	const char* ipResult = inet_ntop(AF_INET, &local.sin_addr, ipBuffer, INET_ADDRSTRLEN);
-	closeSocket(fd);
-	return ipResult != nullptr ? std::string(ipBuffer) : std::string();
-}
-
 std::string buildProbeMessage(std::uint16_t discoveryPort) {
 	return std::string("255.255.255.255:") + std::to_string(discoveryPort);
 }
-
-std::vector<sockaddr_in> buildBroadcastTargets(std::uint16_t discoveryPort) {
-	std::vector<sockaddr_in> targets;
-
-	auto addTarget = [&](std::uint32_t ip) {
-		sockaddr_in addr{};
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons(discoveryPort);
-		addr.sin_addr.s_addr = htonl(ip);
-		targets.push_back(addr);
-	};
-
-	addTarget(INADDR_BROADCAST);
-
-#ifndef _WIN32
-	struct ifaddrs* ifaddr = nullptr;
-	if (getifaddrs(&ifaddr) == 0) {
-		for (auto* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
-			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
-				continue;
-			}
-			if ((ifa->ifa_flags & IFF_BROADCAST) == 0) {
-				continue;
-			}
-
-			auto* broad = reinterpret_cast<sockaddr_in*>(ifa->ifa_broadaddr);
-			if (broad == nullptr) {
-				continue;
-			}
-
-			sockaddr_in addr = *broad;
-			addr.sin_port = htons(discoveryPort);
-			if (std::none_of(targets.begin(), targets.end(), [&](const sockaddr_in& existing) {
-					return existing.sin_addr.s_addr == addr.sin_addr.s_addr;
-				})) {
-				targets.push_back(addr);
-			}
-		}
-		freeifaddrs(ifaddr);
-	}
-#endif
-
-	return targets;
-}
-
 constexpr std::chrono::milliseconds kDefaultInactiveTimeout{15000};
-
-bool waitReadable(SocketHandle socketFd, int timeoutMs) {
-	if (timeoutMs < 0) {
-		timeoutMs = 0;
-	}
-
-	fd_set readSet;
-	FD_ZERO(&readSet);
-	FD_SET(socketFd, &readSet);
-
-	timeval timeout{};
-	timeout.tv_sec = timeoutMs / 1000;
-	timeout.tv_usec = (timeoutMs % 1000) * 1000;
-
-	const int ready = select(static_cast<int>(socketFd) + 1, &readSet, nullptr, nullptr, &timeout);
-	return ready > 0;
-}
 }  // namespace
 
 DeviceDiscovery::DeviceDiscovery(std::string deviceName, std::uint16_t servicePort, std::uint16_t discoveryPort)
@@ -199,71 +41,42 @@ DeviceDiscovery::DeviceDiscovery(std::string deviceName, std::uint16_t servicePo
 	  discoveryPort_(discoveryPort) {}
 
 bool DeviceDiscovery::sender() const {
-	if (!initSockets()) {
+	if (!platform::PlatformSocket::initializeSocketSystem()) {
 		return false;
 	}
 
-	const SocketHandle socketFd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (socketFd == kInvalidSocket) {
-		shutdownSockets();
+	auto socket = platform::PlatformSocket::createUDP();
+	if (!socket) {
+		platform::PlatformSocket::shutdownSocketSystem();
 		return false;
 	}
 
-	int enableBroadcast = 1;
-	if (setsockopt(socketFd, SOL_SOCKET, SO_BROADCAST,
-	               reinterpret_cast<const char*>(&enableBroadcast),
-	               static_cast<SocketLen>(sizeof(enableBroadcast))) < 0) {
-		closeSocket(socketFd);
-		shutdownSockets();
+	if (!socket->setBroadcast(true)) {
+		platform::PlatformSocket::shutdownSocketSystem();
 		return false;
 	}
 
 	const std::string payload = buildProbeMessage(discoveryPort_);
-	const auto targets = buildBroadcastTargets(discoveryPort_);
 	int sentCount = 0;
-	for (const auto& addr : targets) {
-		char targetIpBuffer[INET_ADDRSTRLEN] = {0};
-		const char* targetIp = inet_ntop(AF_INET, &addr.sin_addr, targetIpBuffer, INET_ADDRSTRLEN);
-		const std::string targetIpStr = targetIp != nullptr ? std::string(targetIp) : std::string("unknown");
-
-		const int sentProbe = sendto(socketFd,
-		                             payload.c_str(),
-		                             static_cast<int>(payload.size()),
-		                             0,
-		                             reinterpret_cast<const sockaddr*>(&addr),
-		                             static_cast<SocketLen>(sizeof(addr)));
-		if (sentProbe >= 0) {
-			++sentCount;
-			Logger::info("Discovery TX probe: to=" + targetIpStr + ":" + std::to_string(discoveryPort_) +
-			             " payload='" + payload + "'");
-		} else {
-			Logger::warn("Discovery TX probe failed: to=" + targetIpStr + ":" + std::to_string(discoveryPort_));
-		}
-
-		std::string announce = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
-		                      std::to_string(servicePort_);
-		const std::string advertisedIp = localIpForRemote(addr);
-		if (!advertisedIp.empty()) {
-			announce += "|" + advertisedIp;
-		}
-
-		const int sentAnnounce = sendto(socketFd,
-		                                announce.c_str(),
-		                                static_cast<int>(announce.size()),
-		                                0,
-		                                reinterpret_cast<const sockaddr*>(&addr),
-		                                static_cast<SocketLen>(sizeof(addr)));
-		if (sentAnnounce >= 0) {
-			++sentCount;
-			Logger::info("Discovery TX announce: to=" + targetIpStr + ":" + std::to_string(discoveryPort_) +
-			             " payload='" + announce + "'");
-		} else {
-			Logger::warn("Discovery TX announce failed: to=" + targetIpStr + ":" + std::to_string(discoveryPort_));
-		}
+	if (socket->sendTo("255.255.255.255", discoveryPort_, payload)) {
+		++sentCount;
+		Logger::info("Discovery TX probe: to=255.255.255.255:" + std::to_string(discoveryPort_) +
+		             " payload='" + payload + "'");
+	} else {
+		Logger::warn("Discovery TX probe failed: to=255.255.255.255:" + std::to_string(discoveryPort_));
 	}
 
-	closeSocket(socketFd);
-	shutdownSockets();
+	const std::string announce = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
+	                             std::to_string(servicePort_);
+	if (socket->sendTo("255.255.255.255", discoveryPort_, announce)) {
+		++sentCount;
+		Logger::info("Discovery TX announce: to=255.255.255.255:" + std::to_string(discoveryPort_) +
+		             " payload='" + announce + "'");
+	} else {
+		Logger::warn("Discovery TX announce failed: to=255.255.255.255:" + std::to_string(discoveryPort_));
+	}
+
+	platform::PlatformSocket::shutdownSocketSystem();
 	return sentCount > 0;
 }
 
@@ -272,33 +85,23 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		return std::nullopt;
 	}
 
-	if (!initSockets()) {
+	if (!platform::PlatformSocket::initializeSocketSystem()) {
 		return std::nullopt;
 	}
 
-	const SocketHandle socketFd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (socketFd == kInvalidSocket) {
-		shutdownSockets();
+	auto socket = platform::PlatformSocket::createUDP();
+	if (!socket) {
+		platform::PlatformSocket::shutdownSocketSystem();
 		return std::nullopt;
 	}
 
-	int reuse = 1;
-	if (setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR,
-	               reinterpret_cast<const char*>(&reuse),
-	               static_cast<SocketLen>(sizeof(reuse))) < 0) {
-		closeSocket(socketFd);
-		shutdownSockets();
+	if (!socket->setReuseAddress(true)) {
+		platform::PlatformSocket::shutdownSocketSystem();
 		return std::nullopt;
 	}
 
-	sockaddr_in local{};
-	local.sin_family = AF_INET;
-	local.sin_port = htons(discoveryPort_);
-	local.sin_addr.s_addr = htonl(INADDR_ANY);
-
-	if (bind(socketFd, reinterpret_cast<const sockaddr*>(&local), static_cast<SocketLen>(sizeof(local))) < 0) {
-		closeSocket(socketFd);
-		shutdownSockets();
+	if (!socket->bind("0.0.0.0", discoveryPort_)) {
+		platform::PlatformSocket::shutdownSocketSystem();
 		return std::nullopt;
 	}
 
@@ -309,59 +112,33 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		const auto now = std::chrono::steady_clock::now();
 		const auto remainingMs = static_cast<int>(
 			std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
-		if (remainingMs <= 0 || !waitReadable(socketFd, remainingMs)) {
+		if (remainingMs <= 0) {
 			break;
 		}
 
-		std::array<char, 1024> buffer{};
-		sockaddr_in senderAddr{};
-		SocketLen senderLen = static_cast<SocketLen>(sizeof(senderAddr));
-		const int received = recvfrom(socketFd,
-		                              buffer.data(),
-		                              static_cast<int>(buffer.size() - 1),
-		                              0,
-		                              reinterpret_cast<sockaddr*>(&senderAddr),
-		                              &senderLen);
-
-		if (received < 0) {
+		auto packet = socket->receiveFrom(1024, remainingMs);
+		if (!packet) {
 			continue;
 		}
 
-		buffer[static_cast<std::size_t>(received)] = '\0';
-		const std::string payload(buffer.data());
-
-		char ipBuffer[INET_ADDRSTRLEN] = {0};
-		const char* ipResult = inet_ntop(AF_INET, &senderAddr.sin_addr, ipBuffer, INET_ADDRSTRLEN);
-		const std::string senderIp = ipResult != nullptr ? std::string(ipBuffer) : std::string();
-		Logger::info("Discovery RX packet: from=" + senderIp + ":" + std::to_string(discoveryPort_) +
+		const std::string payload(packet->data.begin(), packet->data.end());
+		Logger::info("Discovery RX packet: from=" + packet->address + ":" + std::to_string(packet->port) +
 		             " payload='" + payload + "'");
 
 		if (payload == buildProbeMessage(discoveryPort_)) {
-			sockaddr_in responseTarget = senderAddr;
-			responseTarget.sin_port = htons(discoveryPort_);
-			const std::string advertisedIp = localIpForRemote(senderAddr);
-
 			std::string response = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
 			                       std::to_string(servicePort_);
-			if (!advertisedIp.empty()) {
-				response += "|" + advertisedIp;
-			}
-			const int sentResponse = sendto(socketFd,
-			       response.c_str(),
-			       static_cast<int>(response.size()),
-			       0,
-			       reinterpret_cast<const sockaddr*>(&responseTarget),
-			       static_cast<SocketLen>(sizeof(responseTarget)));
-			if (sentResponse >= 0) {
-				Logger::info("Discovery TX response: to=" + senderIp + ":" + std::to_string(discoveryPort_) +
-				             " payload='" + response + "'");
+			if (socket->sendTo(packet->address, discoveryPort_, response)) {
+				Logger::info("Discovery TX response: to=" + packet->address + ":" +
+				             std::to_string(discoveryPort_) + " payload='" + response + "'");
 			} else {
-				Logger::warn("Discovery TX response failed: to=" + senderIp + ":" + std::to_string(discoveryPort_));
+				Logger::warn("Discovery TX response failed: to=" + packet->address + ":" +
+				             std::to_string(discoveryPort_));
 			}
 			continue;
 		}
 
-		auto parsed = parseMessage(payload, senderIp);
+		auto parsed = parseMessage(payload, packet->address);
 		if (!parsed.has_value() || parsed->deviceId == deviceId_) {
 			continue;
 		}
@@ -375,8 +152,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::receiver(int timeoutMs
 		}
 	}
 
-	closeSocket(socketFd);
-	shutdownSockets();
+	platform::PlatformSocket::shutdownSocketSystem();
 	return discovered;
 }
 
@@ -441,7 +217,7 @@ std::optional<DeviceDiscovery::PeerInfo> DeviceDiscovery::parseMessage(const std
 	}
 
 	std::string peerIp = senderIp;
-	if (tokens.size() == 5 && isValidIpv4(tokens[4]) && tokens[4] != "0.0.0.0") {
+	if (tokens.size() == 5 && !tokens[4].empty() && tokens[4] != "0.0.0.0") {
 		peerIp = tokens[4];
 	}
 
