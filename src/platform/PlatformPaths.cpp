@@ -21,7 +21,13 @@ std::optional<std::filesystem::path> PlatformPaths::cacheDir_;
 
 void PlatformPaths::initialize(const std::string& appName) {
 	if (!appName.empty()) {
-		appName_ = appName;
+		if (appName_ != appName) {
+			appName_ = appName;
+			configDir_.reset();
+			logDir_.reset();
+			dataDir_.reset();
+			cacheDir_.reset();
+		}
 	}
 }
 

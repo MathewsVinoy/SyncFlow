@@ -355,10 +355,6 @@ int Application::run() {
 	const int configuredPort = config_.getInt("port", 8080);
 	int broadcastIntervalMs = config_.getInt("broadcast_interval_ms", 2000);
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
-	std::filesystem::path syncFolderPath(syncFolder);
-	if (!syncFolderPath.is_absolute()) {
-		syncFolderPath = std::filesystem::absolute(syncFolderPath);
-	}
 	std::filesystem::path mirrorFolderPathRun(config_.getString("mirror_folder", (syncFolderPath / ".syncflow_mirror").string()));
 	if (!mirrorFolderPathRun.is_absolute()) {
 		mirrorFolderPathRun = std::filesystem::absolute(mirrorFolderPathRun);

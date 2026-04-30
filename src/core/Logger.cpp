@@ -1,4 +1,5 @@
 #include "core/Logger.h"
+#include "platform/PlatformPaths.h"
 
 #include <filesystem>
 #include <memory>
@@ -21,7 +22,12 @@ std::shared_ptr<spdlog::logger> ensureLogger(const std::string& folder) {
         return g_logger;
     }
 
-    const std::filesystem::path log_folder(folder);
+    std::filesystem::path log_folder;
+    if (!folder.empty()) {
+        log_folder = std::filesystem::path(folder);
+    } else {
+        log_folder = platform::PlatformPaths::getLogDir().value_or(std::filesystem::path("log"));
+    }
     std::filesystem::create_directories(log_folder);
 
     const std::filesystem::path log_file = log_folder / "app.log";
@@ -48,7 +54,7 @@ void Logger::init(const std::string& folder) {
 }
 
 void Logger::setLevel(const std::string& level) {
-    const auto logger = ensureLogger("log");
+    const auto logger = ensureLogger("");
 
     if (level == "debug") {
         logger->set_level(spdlog::level::debug);
@@ -98,7 +104,7 @@ void Logger::debug(const std::string& message) {
 }
 
 void Logger::write(const std::string& level, const std::string& message) {
-    const auto logger = ensureLogger("log");
+    const auto logger = ensureLogger("");
 
     // If sync-data-only mode is enabled, filter messages
     if (g_sync_data_only && !shouldLog(message)) {

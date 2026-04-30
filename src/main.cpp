@@ -1,4 +1,5 @@
 #include "core/Application.h"
+#include "platform/PlatformPaths.h"
 
 #include <filesystem>
 #include <fstream>
@@ -21,7 +22,17 @@
 namespace {
 
 constexpr const char* kDefaultConfigFile = "config.json";
-constexpr const char* kDefaultPidFile = "/tmp/syncflow.pid";
+
+std::filesystem::path getDefaultConfigPath() {
+	return platform::PlatformPaths::getConfigFile(kDefaultConfigFile);
+}
+
+std::filesystem::path getDefaultPidFilePath() {
+	if (auto tempDir = platform::PlatformPaths::getTempDir()) {
+		return *tempDir / "syncflow.pid";
+	}
+	return std::filesystem::temp_directory_path() / "syncflow.pid";
+}
 
 std::filesystem::path resolveConfigPath(const std::string& fileName = kDefaultConfigFile) {
 	std::filesystem::path path(fileName);
@@ -44,25 +55,39 @@ std::filesystem::path resolveConfigPath(const std::string& fileName = kDefaultCo
 		}
 	}
 
-	return std::filesystem::absolute(path);
+	auto platformConfig = platform::PlatformPaths::getConfigFile(path.filename().string());
+	if (std::filesystem::exists(platformConfig)) {
+		return platformConfig;
+	}
+
+	if (path.filename() == kDefaultConfigFile) {
+		return getDefaultConfigPath();
+	}
+
+	return std::filesystem::absolute(path.filename());
 }
 
 std::filesystem::path resolvePidFilePath() {
+	const auto defaultPidFile = getDefaultPidFilePath();
 	auto configPath = resolveConfigPath();
 	std::ifstream in(configPath);
 	if (!in.is_open()) {
-		return kDefaultPidFile;
+		return defaultPidFile;
 	}
 
 	try {
 		auto json = nlohmann::json::parse(in);
 		if (json.contains("pid_file") && json["pid_file"].is_string()) {
-			return std::filesystem::path(json["pid_file"].get<std::string>());
+			std::filesystem::path configured = json["pid_file"].get<std::string>();
+			if (!configured.is_absolute()) {
+				configured = configPath.parent_path() / configured;
+			}
+			return configured;
 		}
 	} catch (...) {
 	}
 
-	return kDefaultPidFile;
+	return defaultPidFile;
 }
 
 void printUsage(const char* executable) {
@@ -116,6 +141,13 @@ bool updateSyncPath(const std::string& newPath) {
 
 	root["sync_folder"] = absoluteSyncPath.string();
 	root["mirror_folder"] = (absoluteSyncPath / ".syncflow_mirror").string();
+
+	if (configPath.has_parent_path()) {
+		std::filesystem::create_directories(configPath.parent_path(), ec);
+		if (ec) {
+			return false;
+		}
+	}
 
 	std::ofstream out(configPath, std::ios::trunc);
 	if (!out.is_open()) {
@@ -259,6 +291,8 @@ int stopDaemon(const std::filesystem::path& pidFile) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+	platform::PlatformPaths::initialize("syncflow");
+
 	const std::vector<std::string> args(argv, argv + argc);
 	if (args.size() <= 1) {
 		return runApplication();

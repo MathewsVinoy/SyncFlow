@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -28,7 +27,7 @@ namespace platform {
  */
 class PlatformSocket {
 public:
-	struct Datagram {
+	struct UdpPacket {
 		std::string address;
 		std::uint16_t port = 0;
 		std::vector<std::uint8_t> data;
@@ -62,6 +61,9 @@ public:
 	std::optional<std::vector<std::uint8_t>> receive(std::size_t maxBytes, int timeoutMs = -1);
 	bool send(const std::vector<std::uint8_t>& data);
 	bool send(const std::string& data);
+	bool sendTo(const std::string& address, std::uint16_t port, const std::vector<std::uint8_t>& data);
+	bool sendTo(const std::string& address, std::uint16_t port, const std::string& data);
+	std::optional<UdpPacket> receiveFrom(std::size_t maxBytes, int timeoutMs = -1);
 
 	// Configuration
 	bool setNonBlocking(bool nonBlocking);
@@ -79,9 +81,6 @@ public:
 	// Utility
 	static std::optional<std::string> getHostname();
 	static std::optional<std::vector<std::string>> getLocalAddresses();
-	std::optional<Datagram> receiveFrom(std::size_t maxBytes, int timeoutMs = -1);
-	bool sendTo(const std::string& address, std::uint16_t port, const std::string& data);
-	bool sendTo(const std::string& address, std::uint16_t port, const std::vector<std::uint8_t>& data);
 
 	SocketHandle handle() const { return socket_; }
 	bool isValid() const { return socket_ != INVALID_SOCKET_HANDLE; }
@@ -93,7 +92,6 @@ private:
 	SocketHandle socket_ = INVALID_SOCKET_HANDLE;
 
 	static int refCount_;
-	static std::mutex refMutex_;
 };
 
 }  // namespace platform

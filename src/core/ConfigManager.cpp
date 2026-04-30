@@ -20,6 +20,13 @@ std::optional<std::filesystem::path> ConfigManager::resolveConfigPath(const std:
 			return configPath;
 		}
 
+#if defined(__linux__) || defined(__APPLE__)
+		const std::filesystem::path systemConfig("/etc/syncflow/config.json");
+		if (std::filesystem::exists(systemConfig)) {
+			return systemConfig;
+		}
+#endif
+
 		// Fall back to current directory
 		if (std::filesystem::exists("config.json")) {
 			return std::filesystem::path("config.json");

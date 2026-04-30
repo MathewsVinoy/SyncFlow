@@ -194,6 +194,10 @@ add_executable(app
 	src/main.cpp
 )
 
+set_target_properties(app PROPERTIES
+	OUTPUT_NAME syncflow
+)
+
 target_include_directories(app
 	PRIVATE
 		"${PROJECT_SOURCE_DIR}/include"
@@ -268,14 +272,19 @@ endif()
 # Determine package generator based on platform
 if(WIN32)
 	set(CPACK_GENERATOR "NSIS;ZIP")
-	set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+	if(EXISTS "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+		set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/assets/icon.ico")
+	endif()
 	set(CPACK_NSIS_INSTALL_ROOT "C:\\Program Files")
 	set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+	set(CPACK_NSIS_DISPLAY_NAME "Syncflow")
 elseif(APPLE)
 	set(CPACK_GENERATOR "DragNDrop;TGZ")
 	set(CPACK_DMG_VOLUME_NAME "Syncflow")
 	set(CPACK_BUNDLE_NAME "Syncflow")
-	set(CPACK_BUNDLE_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist")
+	if(EXISTS "${CMAKE_SOURCE_DIR}/assets/Info.plist")
+		set(CPACK_BUNDLE_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist")
+	endif()
 elseif(UNIX AND NOT APPLE)
 	# Linux
 	set(CPACK_GENERATOR "DEB;RPM;TGZ")
@@ -293,9 +302,10 @@ set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
 set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/README.md")
 set(CPACK_PACKAGE_HOMEPAGE_URL "${PROJECT_HOMEPAGE_URL}")
+set(CPACK_PACKAGE_CONTACT "syncflow@users.noreply.github.com")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Syncflow")
 set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-${SYNCFLOW_PLATFORM}")
-set(CPACK_PACKAGE_EXECUTABLES "app" "Syncflow")
+set(CPACK_PACKAGE_EXECUTABLES "syncflow" "Syncflow")
 set(CPACK_STRIP_FILES ON)
 set(CPACK_VERBATIM_VARIABLES ON)
 
@@ -314,11 +324,11 @@ install(TARGETS app
 if(EXISTS "${CMAKE_SOURCE_DIR}/config.json")
 	if(WIN32)
 		install(FILES "${CMAKE_SOURCE_DIR}/config.json"
-			DESTINATION "."
+			DESTINATION ${CMAKE_INSTALL_DATADIR}/syncflow
 		)
 	elseif(APPLE)
 		install(FILES "${CMAKE_SOURCE_DIR}/config.json"
-			DESTINATION "."
+			DESTINATION ${CMAKE_INSTALL_DATADIR}/syncflow
 		)
 	else()
 		install(FILES "${CMAKE_SOURCE_DIR}/config.json"

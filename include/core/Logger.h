@@ -4,7 +4,7 @@
 
 class Logger {
 public:
-	static void init(const std::string& folder = "log");
+	static void init(const std::string& folder = "");
 	static void setLevel(const std::string& level);
 	static void setSyncDataOnly(bool syncOnly = true);
 	static void shutdown();

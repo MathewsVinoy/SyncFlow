@@ -1,0 +1,61 @@
+name: Cross-platform build, test, package
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test-package:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cmake_generator: Ninja
+            package_generator: DEB
+          - os: windows-latest
+            cmake_generator: Ninja
+            package_generator: NSIS
+          - os: macos-latest
+            cmake_generator: Ninja
+            package_generator: DragNDrop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -G "${{ matrix.cmake_generator }}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -C Release
+
+      - name: Package
+        run: cpack --config build/CPackConfig.cmake -G "${{ matrix.package_generator }}"
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}
+          path: |
+            build/*.deb
+            build/*.rpm
+            build/*.exe
+            build/*.zip
+            build/*.dmg
+            build/*.tar.gz
+          if-no-files-found: ignore
