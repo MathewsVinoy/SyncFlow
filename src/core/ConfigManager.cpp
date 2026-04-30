@@ -77,6 +77,7 @@ bool ConfigManager::load(const std::string& filePath) {
 	auto resolvedPath = resolveConfigPath(filePath);
 	if (!resolvedPath) {
 		data_.clear();
+		loadedPath_.reset();
 		return false;
 	}
 
@@ -90,6 +91,7 @@ bool ConfigManager::load(const std::string& filePath) {
 		json parsed = json::parse(input);
 		if (!parsed.is_object()) {
 			data_.clear();
+			loadedPath_.reset();
 			return false;
 		}
 
@@ -108,9 +110,11 @@ bool ConfigManager::load(const std::string& filePath) {
 		}
 
 		data_ = std::move(next);
+		loadedPath_ = *resolvedPath;
 		return true;
 	} catch (const json::exception&) {
 		data_.clear();
+		loadedPath_.reset();
 		return false;
 	}
 }
@@ -119,6 +123,7 @@ bool ConfigManager::loadFromConfigDir(const std::string& filename) {
 	auto configPath = platform::PlatformPaths::getConfigFile(filename);
 	if (!std::filesystem::exists(configPath)) {
 		data_.clear();
+		loadedPath_.reset();
 		return false;
 	}
 
@@ -132,6 +137,7 @@ bool ConfigManager::loadFromConfigDir(const std::string& filename) {
 		json parsed = json::parse(input);
 		if (!parsed.is_object()) {
 			data_.clear();
+			loadedPath_.reset();
 			return false;
 		}
 
@@ -150,11 +156,17 @@ bool ConfigManager::loadFromConfigDir(const std::string& filename) {
 		}
 
 		data_ = std::move(next);
+		loadedPath_ = configPath;
 		return true;
 	} catch (const json::exception&) {
 		data_.clear();
+		loadedPath_.reset();
 		return false;
 	}
+}
+
+std::optional<std::filesystem::path> ConfigManager::loadedPath() const {
+	return loadedPath_;
 }
 
 bool ConfigManager::has(const std::string& key) const {

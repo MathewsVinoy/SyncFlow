@@ -224,6 +224,23 @@ bool isTransferPathSafe(const std::string& path) {
 	return true;
 }
 
+std::filesystem::path resolveConfigRelativePath(const std::filesystem::path& value,
+	                                           const std::optional<std::filesystem::path>& configPath) {
+	if (value.is_absolute()) {
+		return value;
+	}
+
+	std::filesystem::path baseDir = std::filesystem::current_path();
+	if (configPath.has_value()) {
+		const auto parent = configPath->parent_path();
+		if (!parent.empty()) {
+			baseDir = parent.is_absolute() ? parent : std::filesystem::absolute(parent);
+		}
+	}
+
+	return std::filesystem::absolute(baseDir / value);
+}
+
 std::vector<std::string> splitByPipe(const std::string& value) {
 	std::vector<std::string> out;
 	std::stringstream ss(value);
@@ -287,7 +304,8 @@ std::string tempTransferPath(const std::filesystem::path& targetPath, const std:
 bool Application::init() {
 	platform::PlatformPaths::initialize("syncflow");
 
-	const bool configLoaded = config_.load();
+	const bool configLoaded = config_.load("config.json");
+	const auto configPath = config_.loadedPath();
 
 	const std::string appName = config_.getString("app_name", "SyncFlow");
 	platform::PlatformPaths::initialize(appName);
@@ -297,10 +315,7 @@ bool Application::init() {
 	auto defaultSyncDir = defaultDataDir / "sync";
 
 	auto configuredLogFolder = config_.getString("log_folder", defaultLogDir.string());
-	std::filesystem::path logFolder(configuredLogFolder);
-	if (!logFolder.is_absolute()) {
-		logFolder = std::filesystem::absolute(logFolder);
-	}
+	std::filesystem::path logFolder(resolveConfigRelativePath(std::filesystem::path(configuredLogFolder), configPath));
 
 	const std::string logLevel = config_.getString("log_level", "info");
 	const bool syncDataOnlyLogs = config_.getInt("sync_data_only_logs", 0) != 0;
@@ -314,10 +329,8 @@ bool Application::init() {
 
 	const std::string deviceName = config_.getString("device_name", "unknown-device");
 	const int configuredPort = config_.getInt("port", 8080);
-	std::filesystem::path syncFolderPath(config_.getString("sync_folder", defaultSyncDir.string()));
-	if (!syncFolderPath.is_absolute()) {
-		syncFolderPath = std::filesystem::absolute(syncFolderPath);
-	}
+	std::filesystem::path syncFolderPath(resolveConfigRelativePath(
+		std::filesystem::path(config_.getString("sync_folder", defaultSyncDir.string())), configPath));
 	const std::string syncFolder = syncFolderPath.string();
 	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 
@@ -327,8 +340,8 @@ bool Application::init() {
 	Logger::info("port: " + std::to_string(configuredPort));
 	Logger::info("sync_folder: " + syncFolder);
 	Logger::info("log_level: " + logLevel);
-	const std::filesystem::path mirrorFolderPath = std::filesystem::path(config_.getString(
-		"mirror_folder", (syncFolderPath / ".syncflow_mirror").string()));
+	const std::filesystem::path mirrorFolderPath = resolveConfigRelativePath(std::filesystem::path(config_.getString(
+		"mirror_folder", (syncFolderPath / ".syncflow_mirror").string())), configPath);
 	Logger::info("mirror_folder: " + mirrorFolderPath.string());
 	if (securitySecret == "change-me-in-production") {
 		Logger::warn("security_shared_secret is using default value; update it for production");
@@ -355,15 +368,11 @@ int Application::run() {
 	const int configuredPort = config_.getInt("port", 8080);
 	int broadcastIntervalMs = config_.getInt("broadcast_interval_ms", 2000);
 	const std::string syncFolder = config_.getString("sync_folder", "./sync");
-	std::filesystem::path syncFolderPath(syncFolder);
-	if (!syncFolderPath.is_absolute()) {
-		syncFolderPath = std::filesystem::absolute(syncFolderPath);
-	}
-	std::filesystem::path mirrorFolderPathRun(
-		config_.getString("mirror_folder", (syncFolderPath / ".syncflow_mirror").string()));
-	if (!mirrorFolderPathRun.is_absolute()) {
-		mirrorFolderPathRun = std::filesystem::absolute(mirrorFolderPathRun);
-	}
+	const auto configPath = config_.loadedPath();
+	std::filesystem::path syncFolderPath(resolveConfigRelativePath(std::filesystem::path(syncFolder), configPath));
+	std::filesystem::path mirrorFolderPathRun(resolveConfigRelativePath(
+		std::filesystem::path(config_.getString("mirror_folder", (syncFolderPath / ".syncflow_mirror").string())),
+		configPath));
 	const std::string mirrorFolder = mirrorFolderPathRun.string();
 	const std::string securitySecret = config_.getString("security_shared_secret", "change-me-in-production");
 	unsigned int hwThreads = std::thread::hardware_concurrency();

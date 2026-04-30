@@ -17,6 +17,9 @@ public:
 	// Load from platform-specific config directory
 	bool loadFromConfigDir(const std::string& filename = "config.json");
 
+	// Path of the config file that was last loaded successfully
+	std::optional<std::filesystem::path> loadedPath() const;
+
 	bool has(const std::string& key) const;
 
 	std::string getString(const std::string& key, const std::string& defaultValue = "") const;
@@ -24,6 +27,7 @@ public:
 
 private:
 	std::unordered_map<std::string, Value> data_;
+	std::optional<std::filesystem::path> loadedPath_;
 	
 	// Try to resolve file path in standard locations
 	std::optional<std::filesystem::path> resolveConfigPath(const std::string& filePath);
