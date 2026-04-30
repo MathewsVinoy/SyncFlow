@@ -13,20 +13,40 @@ Cross-platform C++ file sync foundation with:
 - versioned local backup snapshots before overwrite/delete
 - unit/integration-style tests for protocol/auth/planner/transfer
 
-## Build and Run
+## Installation (Termux only)
 
-## Build (Debug)
+### 1) Install build tools in Termux
 
 ```bash
-cmake -S . -B build
-cmake --build build -j
+pkg update && pkg upgrade -y
+pkg install -y git cmake clang make ninja openssl
 ```
 
-## Build (Release)
+### 2) Clone project
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+git clone https://github.com/yourusername/syncflow.git
+cd syncflow
+```
+
+### 3) Build (Release)
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+### 4) Run
+
+```bash
+./build/bin/syncflow
+```
+
+### 5) Optional: install binary into Termux prefix
+
+```bash
+cmake --install build --prefix "$PREFIX"
+syncflow
 ```
 
 ## Run (Foreground)
@@ -35,27 +55,33 @@ cmake --build build -j
 ./build/bin/syncflow
 ```
 
-Keep `config.json` in the project root when running.
+## Configuration location
+
+On Termux, SyncFlow uses:
+
+- `~/.config/syncflow/config.json`
+
+Tip: easiest first setup is:
+
+```bash
+syncflow set-sync-path /path/to/your/folder
+```
+
+This creates/updates `sync_folder` and `mirror_folder` in config.
 
 ## CLI Commands
 
 ```bash
-./build/bin/syncflow start
-./build/bin/syncflow stop
-./build/bin/syncflow set-sync-path /absolute/or/relative/path
-./build/bin/syncflow run
+syncflow start
+syncflow stop
+syncflow set-sync-path /absolute/or/relative/path
+syncflow run
 ```
 
-- `start`: starts the daemon and writes a PID file (default: `/tmp/syncflow.pid`).
+- `start`: starts daemon mode (Linux/macOS) and writes a PID file in the OS temp/runtime location.
 - `stop`: stops the daemon via SIGTERM using the PID file.
 - `set-sync-path`: updates `sync_folder` in `config.json` and creates the folder.
 - `run`: explicit foreground mode (same behavior as running without arguments).
-
-## Test
-
-```bash
-ctest --test-dir build --output-on-failure
-```
 
 ## Important Production Notes
 
