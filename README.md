@@ -22,11 +22,17 @@ pkg update && pkg upgrade -y
 pkg install -y git cmake clang make ninja openssl
 ```
 
-### 2) Clone project
+git clone https://github.com/yourusername/syncflow.git
+cd syncflow
+
+### 2) Clone project and third-party libraries
 
 ```bash
 git clone https://github.com/yourusername/syncflow.git
 cd syncflow
+# Clone third-party libraries (example: fmt and spdlog)
+git clone https://github.com/fmtlib/fmt.git third_party/fmt
+git clone https://github.com/gabime/spdlog.git third_party/spdlog
 ```
 
 ### 3) Build (Release)
