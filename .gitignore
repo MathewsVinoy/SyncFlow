@@ -38,10 +38,22 @@ CMakeUserPresets.json
 # Build directories
 build/
 Build/
+build_*/
+build_check/
 cmake-build-debug/
 cmake-build-release/
 out/
 dist/
+
+# CPack package artifacts
+_CPack_Packages/
+syncflow-*.deb
+syncflow-*.rpm
+syncflow-*.dmg
+syncflow-*.pkg
+syncflow-*.msi
+syncflow-*.zip
+syncflow-*.tar.gz
 
 # IDE / editors
 .vscode/

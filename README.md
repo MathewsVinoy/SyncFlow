@@ -32,7 +32,7 @@ cmake --build build -j
 ## Run (Foreground)
 
 ```bash
-./build/app
+./build/bin/syncflow
 ```
 
 Keep `config.json` in the project root when running.
@@ -40,10 +40,10 @@ Keep `config.json` in the project root when running.
 ## CLI Commands
 
 ```bash
-./build/app start
-./build/app stop
-./build/app set-sync-path /absolute/or/relative/path
-./build/app run
+./build/bin/syncflow start
+./build/bin/syncflow stop
+./build/bin/syncflow set-sync-path /absolute/or/relative/path
+./build/bin/syncflow run
 ```
 
 - `start`: starts the daemon and writes a PID file (default: `/tmp/syncflow.pid`).

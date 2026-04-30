@@ -173,6 +173,17 @@ syncflow_add_module(sync_engine)
 syncflow_add_module(crypto)
 syncflow_add_module(security)
 
+# Inter-module dependencies
+target_link_libraries(core
+	PRIVATE
+		platform
+)
+
+target_link_libraries(networking
+	PRIVATE
+		platform
+)
+
 # Ensure platform module links appropriate system libraries
 if(WIN32)
 	target_link_libraries(platform
