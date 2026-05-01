@@ -172,3 +172,4 @@ third_party/**/*.so
 .env.local
 local.properties
 checkmate/
+.syncflow_tls/
