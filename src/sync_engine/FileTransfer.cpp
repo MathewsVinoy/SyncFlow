@@ -11,6 +11,47 @@
 #include <openssl/evp.h>
 
 namespace syncflow::engine {
+namespace {
+	std::vector<std::byte> rleCompress(const std::vector<std::byte>& input) {
+		std::vector<std::byte> out;
+		if (input.empty()) {
+			return out;
+		}
+
+		out.reserve(input.size() + 4);
+		out.push_back(std::byte{'R'});
+		out.push_back(std::byte{'L'});
+		out.push_back(std::byte{'E'});
+		out.push_back(std::byte{'1'});
+
+		for (std::size_t i = 0; i < input.size();) {
+			const auto value = input[i];
+			std::size_t run = 1;
+			while (i + run < input.size() && input[i + run] == value && run < 255) {
+				++run;
+			}
+			out.push_back(static_cast<std::byte>(run));
+			out.push_back(value);
+			i += run;
+		}
+
+		return out;
+	}
+
+	std::optional<std::vector<std::byte>> rleDecompress(const std::vector<std::byte>& input) {
+		if (input.size() < 4 || input[0] != std::byte{'R'} || input[1] != std::byte{'L'} ||
+		    input[2] != std::byte{'E'} || input[3] != std::byte{'1'}) {
+			return std::nullopt;
+		}
+
+		std::vector<std::byte> out;
+		for (std::size_t i = 4; i + 1 < input.size(); i += 2) {
+			const auto run = static_cast<unsigned char>(input[i]);
+			out.insert(out.end(), run, input[i + 1]);
+		}
+		return out;
+	}
+}  // namespace
 
 TransferStateStore::TransferStateStore(std::filesystem::path root) : root_(std::move(root)) {}
 
@@ -47,7 +88,9 @@ void TransferStateStore::clear(const std::string& transferId) const {
 
 FileTransfer::FileTransfer(std::size_t chunkSize) : chunkSize_(chunkSize == 0 ? 256 * 1024 : chunkSize) {}
 
-std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path& file, std::uint64_t offset) const {
+std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path& file,
+	                                                 std::uint64_t offset,
+	                                                 bool allowCompression) const {
 	std::ifstream in(file, std::ios::binary);
 	if (!in.is_open()) {
 		Logger::error("FileTransfer: Failed to open file for reading - " + file.string());
@@ -59,7 +102,7 @@ std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path
 	if (offset >= totalSize) {
 		Logger::debug("FileTransfer: Offset beyond file size - file: " + file.string() +
 		              ", offset: " + std::to_string(offset) + ", size: " + std::to_string(totalSize));
-		return TransferChunk{offset, {}, true};
+		return TransferChunk{offset, {}, true, false};
 	}
 
 	in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
@@ -71,7 +114,15 @@ std::optional<TransferChunk> FileTransfer::readChunk(const std::filesystem::path
 	const bool last = (offset + n) >= totalSize;
 	Logger::debug("FileTransfer: Read chunk - file: " + file.string() + ", offset: " + std::to_string(offset) +
 	              ", size: " + std::to_string(n) + ", last: " + (last ? "true" : "false"));
-	return TransferChunk{offset, std::move(bytes), last};
+	TransferChunk chunk{offset, std::move(bytes), last, false};
+	if (allowCompression) {
+		const auto compressed = rleCompress(chunk.bytes);
+		if (!compressed.empty() && compressed.size() < chunk.bytes.size()) {
+			chunk.bytes = std::move(compressed);
+			chunk.compressed = true;
+		}
+	}
+	return chunk;
 }
 
 bool FileTransfer::writeChunk(const std::filesystem::path& file, const TransferChunk& chunk) const {
@@ -91,15 +142,25 @@ bool FileTransfer::writeChunk(const std::filesystem::path& file, const TransferC
 		}
 	}
 
+	std::vector<std::byte> payload = chunk.bytes;
+	if (chunk.compressed) {
+		auto decoded = rleDecompress(chunk.bytes);
+		if (!decoded.has_value()) {
+			Logger::error("FileTransfer: Failed to decompress chunk - " + file.string());
+			return false;
+		}
+		payload = std::move(*decoded);
+	}
+
 	out.seekp(static_cast<std::streamoff>(chunk.offset), std::ios::beg);
-	out.write(reinterpret_cast<const char*>(chunk.bytes.data()), static_cast<std::streamsize>(chunk.bytes.size()));
+	out.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
 	if (!out) {
 		Logger::error("FileTransfer: Failed to write chunk to file - " + file.string());
 		return false;
 	}
 
 	Logger::debug("FileTransfer: Wrote chunk - file: " + file.string() + ", offset: " + std::to_string(chunk.offset) +
-	              ", size: " + std::to_string(chunk.bytes.size()));
+	              ", size: " + std::to_string(payload.size()) + (chunk.compressed ? ", compressed" : ""));
 	return true;
 }
 
@@ -137,7 +198,16 @@ bool FileTransfer::writeChunkToTemporary(const std::filesystem::path& tempFile,
 	}
 
 	// Write chunk data at EOF (append mode)
-	out.write(reinterpret_cast<const char*>(chunk.bytes.data()), static_cast<std::streamsize>(chunk.bytes.size()));
+	std::vector<std::byte> payload = chunk.bytes;
+	if (chunk.compressed) {
+		auto decoded = rleDecompress(chunk.bytes);
+		if (!decoded.has_value()) {
+			Logger::error("FileTransfer: Failed to decompress temporary chunk - " + tempFile.string());
+			return false;
+		}
+		payload = std::move(*decoded);
+	}
+	out.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
 	out.flush();
 
 	if (!out) {
@@ -146,7 +216,7 @@ bool FileTransfer::writeChunkToTemporary(const std::filesystem::path& tempFile,
 	}
 
 	Logger::debug("FileTransfer: Wrote chunk to temporary file - file: " + tempFile.string() +
-	              ", chunk size: " + std::to_string(chunk.bytes.size()));
+	              ", chunk size: " + std::to_string(payload.size()) + (chunk.compressed ? ", compressed" : ""));
 	return true;
 }
 

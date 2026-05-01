@@ -1,10 +1,13 @@
 #pragma once
 
+#include "sync_engine/BlockIndex.h"
 #include "sync_engine/RemoteSync.h"
 #include "sync_engine/ResumableTransferManager.h"
+
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
-#include <filesystem>
 
 namespace syncflow::networking {
 
@@ -18,6 +21,17 @@ public:
 	
 	// Build metadata response (send local metadata)
 	std::string buildMetadataResponse() const;
+
+	// Build block-index request/response messages for delta exchange
+	std::string buildBlockIndexRequest() const;
+	std::string buildBlockIndexResponse(const syncflow::engine::BlockIndex& index) const;
+	std::optional<syncflow::engine::BlockIndex> parseBlockIndexResponse(const std::string& message) const;
+
+	// Build resumable block request for a specific file block
+	std::string buildBlockRequest(const std::string& filePath,
+	                              std::uint64_t blockIndex,
+	                              std::uint64_t offset,
+	                              std::uint64_t size) const;
 	
 	// Parse received metadata from peer
 	std::vector<syncflow::engine::RemoteFileInfo> parseMetadata(const std::string& message) const;

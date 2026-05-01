@@ -16,8 +16,16 @@ std::string typeToString(MessageType type) {
 			return "META_PUSH";
 		case MessageType::MetadataRequest:
 			return "META_REQ";
+		case MessageType::IndexRequest:
+			return "INDEX_REQ";
+		case MessageType::IndexResponse:
+			return "INDEX_RESP";
 		case MessageType::TransferRequest:
 			return "TX_REQ";
+		case MessageType::BlockRequest:
+			return "BLOCK_REQ";
+		case MessageType::BlockResponse:
+			return "BLOCK_RESP";
 		case MessageType::TransferChunk:
 			return "TX_CHUNK";
 		case MessageType::TransferComplete:
@@ -45,8 +53,20 @@ MessageType stringToType(const std::string& value) {
 	if (value == "META_REQ") {
 		return MessageType::MetadataRequest;
 	}
+	if (value == "INDEX_REQ") {
+		return MessageType::IndexRequest;
+	}
+	if (value == "INDEX_RESP") {
+		return MessageType::IndexResponse;
+	}
 	if (value == "TX_REQ") {
 		return MessageType::TransferRequest;
+	}
+	if (value == "BLOCK_REQ") {
+		return MessageType::BlockRequest;
+	}
+	if (value == "BLOCK_RESP") {
+		return MessageType::BlockResponse;
 	}
 	if (value == "TX_CHUNK") {
 		return MessageType::TransferChunk;

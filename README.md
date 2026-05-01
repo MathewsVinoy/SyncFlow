@@ -13,6 +13,10 @@ Cross-platform C++ file sync foundation with:
 - versioned local backup snapshots before overwrite/delete
 - unit/integration-style tests for protocol/auth/planner/transfer
 
+## Target sync model
+
+The intended long-term sync behavior is described in [docs/decentralized_p2p_sync.md](docs/decentralized_p2p_sync.md).
+
 ## Installation (Termux only)
 
 ### 1) Install build tools in Termux
@@ -60,6 +64,16 @@ syncflow
 ```bash
 ./build/bin/syncflow
 ```
+
+## Block-index prototype example
+
+The repo now includes a runnable block-index prototype that scans a folder, saves a local index, and prints block-level delta steps:
+
+```bash
+./build/bin/block_index_example /path/to/sync-folder
+```
+
+If no path is provided, the example creates a temporary demo folder.
 
 ## Configuration location
 

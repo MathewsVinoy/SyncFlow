@@ -1,5 +1,6 @@
 #include "networking/SyncProtocol.h"
 #include "security/AuthManager.h"
+#include "sync_engine/BlockIndex.h"
 #include "sync_engine/FileTransfer.h"
 #include "sync_engine/SyncPlanner.h"
 #include "sync_engine/RemoteSync.h"
@@ -83,11 +84,13 @@ int runPlannerTest() {
 		}
 	}
 
+#include "networking/PeerSyncExchange.h"
 	return (sawUpload && sawDownload) ? 0 : 1;
 }
 
 int runTransferTest() {
 	auto root = std::filesystem::temp_directory_path() / "syncflow_test_transfer";
+#include "platform/FolderWatcher.h"
 	std::filesystem::create_directories(root);
 	auto src = root / "src.bin";
 	auto dst = root / "dst.bin";
@@ -124,6 +127,166 @@ int runTransferTest() {
 	return 0;
 }
 
+int runBlockIndexTest() {
+	auto root = std::filesystem::temp_directory_path() / "syncflow_test_block_index";
+
+int runCompressionTest() {
+	auto root = std::filesystem::temp_directory_path() / "syncflow_test_compression";
+	std::filesystem::remove_all(root);
+	std::filesystem::create_directories(root);
+	auto src = root / "src.bin";
+	auto dst = root / "dst.bin";
+
+	{
+		std::ofstream out(src, std::ios::binary | std::ios::trunc);
+		for (int i = 0; i < 4096; ++i) {
+			char c = 'A';
+			out.write(&c, 1);
+		}
+	}
+
+	syncflow::engine::FileTransfer transfer(1024);
+	auto chunk = transfer.readChunk(src, 0, true);
+	if (!chunk.has_value() || !chunk->compressed) {
+		std::cerr << "compression test failed: chunk not compressed\n";
+		return 1;
+	}
+	if (!transfer.writeChunk(dst, *chunk)) {
+		std::cerr << "compression test failed: write failed\n";
+		return 2;
+	}
+	if (transfer.fileSize(src) != transfer.fileSize(dst)) {
+		std::cerr << "compression test failed: size mismatch\n";
+		return 3;
+	}
+
+	std::filesystem::remove_all(root);
+	return 0;
+}
+
+int runPeerExchangeTest() {
+	auto root = std::filesystem::temp_directory_path() / "syncflow_test_peer_exchange";
+	std::filesystem::remove_all(root);
+	std::filesystem::create_directories(root);
+	std::ofstream out(root / "file.txt", std::ios::binary | std::ios::trunc);
+	out << "peer-exchange";
+	out.close();
+
+	syncflow::networking::PeerSyncExchange exchange("dev-local", root);
+	auto indexStore = syncflow::engine::BlockIndexStore(root / ".syncflow" / "index.json", 8);
+	auto index = indexStore.scan(root);
+	auto message = exchange.buildBlockIndexResponse(index);
+	auto parsed = exchange.parseBlockIndexResponse(message);
+	if (!parsed.has_value() || parsed->entries.size() != index.entries.size()) {
+		std::cerr << "peer exchange test failed: block index parse mismatch\n";
+		return 1;
+	}
+
+	auto req = exchange.buildBlockRequest("file.txt", 0, 0, 8);
+	if (req.find("REQ_BLOCK|file.txt|0|0|8") != 0) {
+		std::cerr << "peer exchange test failed: block request malformed\n";
+		return 2;
+	}
+
+	std::filesystem::remove_all(root);
+	return 0;
+}
+
+int runWatcherTest() {
+	auto root = std::filesystem::temp_directory_path() / "syncflow_test_watcher";
+	std::filesystem::remove_all(root);
+	std::filesystem::create_directories(root);
+
+	FolderWatcher watcher(root);
+	if (!watcher.start()) {
+		std::cerr << "watcher test failed: start failed\n";
+		return 1;
+	}
+
+	{
+		std::ofstream out(root / "watch.txt", std::ios::binary | std::ios::trunc);
+		out << "one";
+	}
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	auto events = watcher.poll();
+	bool sawCreate = false;
+	for (const auto& event : events) {
+		if (event.relativePath == "watch.txt" && event.type == FolderWatcher::EventType::Created) {
+			sawCreate = true;
+		}
+	}
+
+	watcher.stop();
+	std::filesystem::remove_all(root);
+	if (!sawCreate) {
+		std::cerr << "watcher test failed: create event not seen\n";
+		return 2;
+	}
+	return 0;
+}
+	std::filesystem::remove_all(root);
+	std::filesystem::create_directories(root / "nested" / "child");
+
+	{
+		std::ofstream out(root / "alpha.txt", std::ios::binary | std::ios::trunc);
+		out << "abcdefghijklmno";
+	}
+	{
+		std::ofstream out(root / "nested" / "child" / "beta.txt", std::ios::binary | std::ios::trunc);
+		out << "block-one-block-two-block-three";
+	}
+
+	syncflow::engine::BlockIndexStore store(root / ".syncflow" / "index.json", 4);
+	auto index = store.scan(root);
+	if (index.entries.empty()) {
+		std::cerr << "block index test failed: no entries\n";
+		return 1;
+	}
+
+	if (!store.save(index)) {
+		std::cerr << "block index test failed: save failed\n";
+		return 2;
+	}
+
+	auto loaded = store.load();
+	if (!loaded.has_value() || loaded->entries.size() != index.entries.size()) {
+		std::cerr << "block index test failed: load mismatch\n";
+		return 3;
+	}
+
+	bool sawDirectory = false;
+	bool sawBlockTransfer = false;
+	auto remote = *loaded;
+	for (auto& entry : remote.entries) {
+		if (entry.isDirectory && entry.relativePath == "nested") {
+			entry.deleted = true;
+		}
+		if (!entry.isDirectory && !entry.blocks.empty()) {
+			entry.blocks.erase(entry.blocks.begin());
+			entry.contentHash.clear();
+		}
+	}
+
+	const auto delta = store.planDelta(index, remote);
+	for (const auto& step : delta) {
+		if (step.kind == syncflow::engine::BlockTransferKind::CreateDirectory && step.relativePath == "nested") {
+			sawDirectory = true;
+		}
+		if (step.kind == syncflow::engine::BlockTransferKind::TransferBlock && step.blockIndex == 0) {
+			sawBlockTransfer = true;
+		}
+	}
+
+	std::filesystem::remove_all(root);
+	if (!sawDirectory || !sawBlockTransfer) {
+		std::cerr << "block index test failed: missing delta steps\n";
+		return 4;
+	}
+
+	return 0;
+}
+
 }  // namespace
 
 int runRemoteSyncTest();
@@ -145,7 +308,23 @@ int main() {
 		std::cerr << "transfer test failed\n";
 		return 1;
 	}
+	if (runBlockIndexTest() != 0) {
+	if (runCompressionTest() != 0) {
+		std::cerr << "compression test failed\n";
+		return 1;
+	}
+		std::cerr << "block index test failed\n";
+		return 1;
+	}
 	if (runRemoteSyncTest() != 0) {
+	if (runPeerExchangeTest() != 0) {
+		std::cerr << "peer exchange test failed\n";
+		return 1;
+	}
+	if (runWatcherTest() != 0) {
+		std::cerr << "watcher test failed\n";
+		return 1;
+	}
 		std::cerr << "remote sync test failed\n";
 		return 1;
 	}

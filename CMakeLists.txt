@@ -232,6 +232,25 @@ if(SYNCFLOW_IPO_SUPPORTED)
 	set_property(TARGET app PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 
+add_executable(block_index_example
+	examples/block_index_example.cpp
+)
+
+target_include_directories(block_index_example
+	PRIVATE
+		"${PROJECT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(block_index_example
+	PRIVATE
+		core
+		sync_engine
+		OpenSSL::Crypto
+		Threads::Threads
+		syncflow_warnings
+		syncflow_release_opts
+)
+
 if(BUILD_TESTING)
 	add_executable(syncflow_tests
 		tests/test_sync_core.cpp

@@ -4,6 +4,7 @@
 #include <sstream>
 #include <fstream>
 #include <algorithm>
+#include <system_error>
 
 namespace syncflow::networking {
 
@@ -22,6 +23,33 @@ std::string PeerSyncExchange::buildMetadataResponse() const {
 	
 	// Message format: RESP_META|deviceId|encodedMeta
 	return "RESP_META|" + localDeviceId_ + "|" + encoded;
+}
+
+std::string PeerSyncExchange::buildBlockIndexRequest() const {
+	return "REQ_INDEX|" + localDeviceId_;
+}
+
+std::string PeerSyncExchange::buildBlockIndexResponse(const syncflow::engine::BlockIndex& index) const {
+	syncflow::engine::BlockIndexStore codec{syncFolder_ / ".syncflow" / "peer-index.json"};
+	return "RESP_INDEX|" + localDeviceId_ + "|" + codec.encode(index);
+}
+
+std::optional<syncflow::engine::BlockIndex> PeerSyncExchange::parseBlockIndexResponse(const std::string& message) const {
+	const auto first = message.find('|');
+	const auto second = message.find('|', first == std::string::npos ? first : first + 1);
+	if (first == std::string::npos || second == std::string::npos) {
+		return std::nullopt;
+	}
+	syncflow::engine::BlockIndexStore codec{syncFolder_ / ".syncflow" / "peer-index.json"};
+	return codec.decode(message.substr(second + 1));
+}
+
+std::string PeerSyncExchange::buildBlockRequest(const std::string& filePath,
+	                                            std::uint64_t blockIndex,
+	                                            std::uint64_t offset,
+	                                            std::uint64_t size) const {
+	return "REQ_BLOCK|" + filePath + "|" + std::to_string(blockIndex) + "|" + std::to_string(offset) + "|" +
+	       std::to_string(size);
 }
 
 std::vector<syncflow::engine::RemoteFileInfo> PeerSyncExchange::parseMetadata(const std::string& message) const {
@@ -151,6 +179,8 @@ bool PeerSyncExchange::applySync(
 			
 			out.write(fileData.c_str(), fileData.size());
 			out.close();
+			std::error_code ec;
+			std::filesystem::permissions(targetPath, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
 			
 			Logger::info("sync downloaded: " + plan.localPath);
 			return true;

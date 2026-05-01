@@ -8,6 +8,7 @@
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <system_error>
@@ -86,6 +87,8 @@ bool SyncEngine::start() {
 	{
 		std::lock_guard<std::mutex> lock(stateMutex_);
 		lastSnapshot_ = buildSnapshot();
+		watcher_ = std::make_unique<FolderWatcher>(sourceFolder_);
+		(void)watcher_->start();
 		running_ = true;
 		loopThread_ = std::thread([this]() { runLoop(); });
 	}
@@ -112,6 +115,13 @@ void SyncEngine::stop() {
 		transferDispatchThread_.join();
 	}
 	workers_.stop();
+	{
+		std::lock_guard<std::mutex> lock(stateMutex_);
+		if (watcher_) {
+			watcher_->stop();
+			watcher_.reset();
+		}
+	}
 	recordEvent("sync engine stopped");
 }
 
@@ -243,6 +253,30 @@ void SyncEngine::runLoop() {
 			std::lock_guard<std::mutex> lock(stateMutex_);
 			if (!running_) {
 				break;
+			}
+		}
+
+		std::vector<FolderWatcher::Event> watcherEvents;
+		{
+			std::lock_guard<std::mutex> lock(stateMutex_);
+			if (watcher_) {
+				watcherEvents = watcher_->poll();
+			}
+		}
+		for (const auto& event : watcherEvents) {
+			switch (event.type) {
+				case FolderWatcher::EventType::Created:
+					recordEvent("watcher created: " + event.relativePath);
+					break;
+				case FolderWatcher::EventType::Modified:
+					recordEvent("watcher modified: " + event.relativePath);
+					break;
+				case FolderWatcher::EventType::Deleted:
+					recordEvent("watcher deleted: " + event.relativePath);
+					break;
+				case FolderWatcher::EventType::Renamed:
+					recordEvent("watcher renamed: " + event.previousRelativePath + " -> " + event.relativePath);
+					break;
 			}
 		}
 

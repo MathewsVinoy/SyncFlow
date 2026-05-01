@@ -13,6 +13,7 @@ struct TransferChunk {
 	std::uint64_t offset = 0;
 	std::vector<std::byte> bytes;
 	bool last = false;
+	bool compressed = false;
 };
 
 class TransferStateStore {
@@ -32,7 +33,9 @@ public:
 	explicit FileTransfer(std::size_t chunkSize = 256 * 1024);
 
 	// Read a chunk from a file starting at given offset
-	std::optional<TransferChunk> readChunk(const std::filesystem::path& file, std::uint64_t offset) const;
+	std::optional<TransferChunk> readChunk(const std::filesystem::path& file,
+	                                      std::uint64_t offset,
+	                                      bool allowCompression = false) const;
 
 	// Write a chunk to a file, seeking to proper offset (for resumable transfers)
 	bool writeChunk(const std::filesystem::path& file, const TransferChunk& chunk) const;

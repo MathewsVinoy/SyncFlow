@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/ThreadPool.h"
+#include "platform/FolderWatcher.h"
 #include "sync_engine/SyncPlanner.h"
 
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -86,6 +88,7 @@ private:
 	std::filesystem::path mirrorFolder_;
 	std::filesystem::path versionFolder_;
 	ThreadPool workers_;
+	std::unique_ptr<FolderWatcher> watcher_;
 
 	mutable std::mutex stateMutex_;
 	bool running_ = false;
