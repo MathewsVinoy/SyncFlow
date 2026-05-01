@@ -148,18 +148,31 @@ int runCompressionTest() {
 	}
 
 	syncflow::engine::FileTransfer transfer(1024);
-	auto chunk = transfer.readChunk(src, 0, true);
-	if (!chunk.has_value() || !chunk->compressed) {
-		std::cerr << "compression test failed: chunk not compressed\n";
-		return 1;
+	std::uint64_t offset = 0;
+	bool sawCompressedChunk = false;
+	for (;;) {
+		auto chunk = transfer.readChunk(src, offset, true);
+		if (!chunk.has_value()) {
+			std::cerr << "compression test failed: read failed\n";
+			return 1;
+		}
+		sawCompressedChunk = sawCompressedChunk || chunk->compressed;
+		if (!transfer.writeChunk(dst, *chunk)) {
+			std::cerr << "compression test failed: write failed\n";
+			return 2;
+		}
+		if (chunk->last) {
+			break;
+		}
+		offset += static_cast<std::uint64_t>(chunk->bytes.size());
 	}
-	if (!transfer.writeChunk(dst, *chunk)) {
-		std::cerr << "compression test failed: write failed\n";
-		return 2;
+	if (!sawCompressedChunk) {
+		std::cerr << "compression test failed: no chunk was compressed\n";
+		return 3;
 	}
 	if (transfer.fileSize(src) != transfer.fileSize(dst)) {
 		std::cerr << "compression test failed: size mismatch\n";
-		return 3;
+		return 4;
 	}
 
 	std::filesystem::remove_all(root);
@@ -409,4 +422,3 @@ int runRemoteSyncTest() {
 	std::cout << "RemoteSync test passed\n";
 	return 0;
 }
-	std::cout << "RemoteSync test passed\n";
