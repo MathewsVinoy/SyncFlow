@@ -119,6 +119,7 @@ function(syncflow_add_module target_name)
 			target_link_libraries(${target_name}
 				PRIVATE
 					core
+					nlohmann_json::nlohmann_json
 					OpenSSL::Crypto
 			)
 		endif()
