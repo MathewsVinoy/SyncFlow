@@ -6,6 +6,7 @@
 #include "networking/TcpHandshake.h"
 
 #include "platform/PlatformPaths.h"
+#include "platform/PlatformSocket.h"
 
 #include "security/AuthManager.h"
 
@@ -442,6 +443,27 @@ int Application::run() {
 	if (!syncEngine.start()) {
 		Logger::warn("Sync engine failed to start; continuing without file mirroring");
 	}
+
+	const auto syncFilesAtStartup = collectSyncPaths(syncFolderPath);
+	Logger::info("Sync folder files at startup: " + std::to_string(syncFilesAtStartup.size()));
+	if (syncFilesAtStartup.empty()) {
+		Logger::info("Sync folder is empty at startup");
+	}
+
+	const auto localAddresses = platform::PlatformSocket::getLocalAddresses();
+	if (localAddresses.has_value() && !localAddresses->empty()) {
+		std::string joinedAddresses;
+		for (const auto& address : *localAddresses) {
+			if (!joinedAddresses.empty()) {
+				joinedAddresses += ", ";
+			}
+			joinedAddresses += address;
+		}
+		Logger::info("Local network address(es): " + joinedAddresses);
+	} else {
+		Logger::warn("Local network address could not be detected; discovery may still work via broadcast");
+	}
+	Logger::info("Peer discovery status: waiting for another device");
 
 	syncflow::engine::RemoteSync remoteSync;
 	std::mutex remoteMetadataMutex;
