@@ -172,6 +172,28 @@ bool parseFilesMessage(const std::string& payload,
 	return true;
 }
 
+// Helper function to collect all files and directories to sync
+std::vector<std::string> collectSyncPaths(const std::filesystem::path& syncFolder) {
+	std::vector<std::string> paths;
+	
+	if (!std::filesystem::exists(syncFolder)) {
+		return paths;
+	}
+
+	try {
+		for (const auto& entry : std::filesystem::recursive_directory_iterator(syncFolder)) {
+			if (entry.is_regular_file()) {
+				const auto relative = std::filesystem::relative(entry.path(), syncFolder);
+				paths.push_back(relative.string());
+			}
+		}
+	} catch (const std::exception& ex) {
+		Logger::warn("Error scanning sync folder: " + std::string(ex.what()));
+	}
+	
+	return paths;
+}
+
 void logSyncDecisions(const std::string& remoteDeviceId,
 	                  const MetadataSnapshot& localSnapshot,
 	                  const MetadataSnapshot& remoteSnapshot) {
@@ -439,6 +461,7 @@ int Application::run() {
 	Logger::info("Discovery loop started. Press Ctrl+C to stop.");
 	std::mutex knownDevicesMutex;
 	std::unordered_map<std::string, DeviceDiscovery::PeerInfo> knownDevices;
+	bool syncFolderInitialSyncTriggered = false;
 
 	std::thread senderThread([&discovery, broadcastIntervalMs]() {
 		while (g_keepRunning.load()) {
@@ -466,7 +489,8 @@ int Application::run() {
 	                           &pendingDownloadRequests,
 	                           &outboundTransfers,
 	                           &transferWorkerPool,
-	                           &syncFolder]() {
+	                           &syncFolder,
+	                           &syncFolderInitialSyncTriggered]() {
 		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
 		auto nextTransferSweep = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1031,11 +1055,13 @@ int Application::run() {
 			}
 
 			std::string event = "discovered";
+			bool isNewDevice = false;
 			{
 				std::lock_guard<std::mutex> lock(knownDevicesMutex);
 				auto it = knownDevices.find(peer->deviceId);
 				if (it == knownDevices.end()) {
 					knownDevices.emplace(peer->deviceId, *peer);
+					isNewDevice = true;
 				} else {
 					event = "updated";
 					it->second = *peer;
@@ -1046,6 +1072,23 @@ int Application::run() {
 			          << std::endl;
 			Logger::info("Device " + event + ": id=" + peer->deviceId + " name=" + peer->deviceName +
 			             " ip=" + peer->ip + " port=" + std::to_string(peer->port));
+			
+			// Trigger initial sync folder scan and transfer when second device connects
+			if (isNewDevice && knownDevices.size() == 2 && !syncFolderInitialSyncTriggered) {
+				syncFolderInitialSyncTriggered = true;
+				
+				auto syncPaths = collectSyncPaths(std::filesystem::path(syncFolder));
+				Logger::info("Initial sync folder scan triggered. Found " + std::to_string(syncPaths.size()) + 
+				             " files to sync with second device");
+				
+				if (!syncPaths.empty()) {
+					Logger::info("sync folder content to transfer: ");
+					for (const auto& path : syncPaths) {
+						Logger::info("  - " + path);
+					}
+				}
+			}
+			
 			tcp.observePeer(TcpHandshake::RemoteDevice{peer->deviceId, peer->deviceName, peer->ip, peer->port});
 		}
 	});
