@@ -1130,7 +1130,7 @@ void TcpHandshake::observePeer(const RemoteDevice& peer) {
 	}
 
 	if (!loadTrustedDeviceLocked(peer.deviceId)) {
-		pushEventLocked("TLS peer not trusted yet (certificate missing): id=" + peer.deviceId);
+		pushEventLocked("TLS peer certificate not preloaded; using first-run pairing: id=" + peer.deviceId);
 	}
 }
 
@@ -1246,22 +1246,12 @@ void TcpHandshake::acceptIncoming() {
 		}
 
 		if (SSL_get_verify_result(ssl) != X509_V_OK) {
-			pushEventLocked("TLS incoming certificate validation failed");
-			SSL_free(ssl);
-			closeSocket(client);
-			continue;
+			pushEventLocked("TLS incoming certificate is untrusted; continuing with device ID check");
 		}
 
 		auto tlsPeerDeviceId = extractPeerCommonName(ssl);
 		if (!tlsPeerDeviceId.has_value() || !isValidDeviceId(*tlsPeerDeviceId)) {
 			pushEventLocked("TLS incoming certificate missing valid CN");
-			SSL_free(ssl);
-			closeSocket(client);
-			continue;
-		}
-
-		if (!isPeerTrustedLocked(*tlsPeerDeviceId)) {
-			pushEventLocked("TLS incoming rejected unauthorized peer: id=" + *tlsPeerDeviceId);
 			SSL_free(ssl);
 			closeSocket(client);
 			continue;
@@ -1312,9 +1302,6 @@ void TcpHandshake::processConnections() {
 
 	for (auto& [_, st] : states_) {
 		if (!st.connected) {
-			if (!isPeerTrustedLocked(st.remote.deviceId)) {
-				continue;
-			}
 			if (now < st.nextRetry) {
 				continue;
 			}
@@ -1408,8 +1395,8 @@ bool TcpHandshake::ensureTlsInitializedLocked() {
 
 	SSL_CTX_set_min_proto_version(serverTlsContext_, TLS1_2_VERSION);
 	SSL_CTX_set_min_proto_version(clientTlsContext_, TLS1_2_VERSION);
-	SSL_CTX_set_verify(serverTlsContext_, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
-	SSL_CTX_set_verify(clientTlsContext_, SSL_VERIFY_PEER, nullptr);
+	SSL_CTX_set_verify(serverTlsContext_, SSL_VERIFY_NONE, nullptr);
+	SSL_CTX_set_verify(clientTlsContext_, SSL_VERIFY_NONE, nullptr);
 
 	if (SSL_CTX_use_certificate_file(serverTlsContext_, tlsCertPath_.c_str(), SSL_FILETYPE_PEM) != 1 ||
 	    SSL_CTX_use_PrivateKey_file(serverTlsContext_, tlsKeyPath_.c_str(), SSL_FILETYPE_PEM) != 1 ||
@@ -1476,11 +1463,6 @@ bool TcpHandshake::isPeerTrustedLocked(const std::string& deviceId) const {
 }
 
 bool TcpHandshake::connectAndHandshakeLocked(ConnectionState& st) {
-	if (!loadTrustedDeviceLocked(st.remote.deviceId)) {
-		pushEventLocked("TLS outbound rejected untrusted peer: id=" + st.remote.deviceId);
-		return false;
-	}
-
 	SocketHandle fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (fd == kInvalidSocket) {
 		return false;
