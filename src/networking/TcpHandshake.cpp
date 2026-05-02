@@ -643,10 +643,13 @@ std::optional<TcpHandshake::RemoteDevice> TcpHandshake::parseHello(const std::st
 
 #include "networking/TcpHandshake.h"
 
+#include "core/Logger.h"
+
 #include <array>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <optional>
@@ -780,6 +783,15 @@ std::string opensslErrorString() {
 	}
 	ERR_error_string_n(err, buf, sizeof(buf));
 	return std::string(buf);
+}
+
+std::string socketErrorString() {
+#ifdef _WIN32
+	const int err = WSAGetLastError();
+	return "WSA error " + std::to_string(err);
+#else
+	return std::string(std::strerror(errno)) + " (errno=" + std::to_string(errno) + ")";
+#endif
 }
 
 int acceptAllCertificates(int /*preverifyOk*/, X509_STORE_CTX* /*ctx*/) {
@@ -1048,22 +1060,26 @@ bool TcpHandshake::start() {
 		return true;
 	}
 	if (!initSockets()) {
+		Logger::warn("TCP handshake start failed: socket system init failed");
 		return false;
 	}
 
 	if (!ensureTlsInitializedLocked()) {
+		Logger::warn("TCP handshake start failed: TLS initialization failed");
 		shutdownSockets();
 		return false;
 	}
 
 	const SocketHandle fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (fd == kInvalidSocket) {
+		Logger::warn("TCP handshake start failed: socket() failed: " + socketErrorString());
 		shutdownSockets();
 		return false;
 	}
 
 	int reuse = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse)) < 0) {
+		Logger::warn("TCP handshake start failed: setsockopt(SO_REUSEADDR) failed: " + socketErrorString());
 		closeSocket(fd);
 		shutdownSockets();
 		return false;
@@ -1075,6 +1091,8 @@ bool TcpHandshake::start() {
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (bind(fd, reinterpret_cast<const sockaddr*>(&addr), static_cast<SocketLen>(sizeof(addr))) < 0 ||
 	    listen(fd, 16) < 0 || !setNonBlocking(fd, true)) {
+		Logger::warn("TCP handshake start failed on port " + std::to_string(listenPort_) +
+		             ": bind/listen/setNonBlocking failed: " + socketErrorString());
 		closeSocket(fd);
 		shutdownSockets();
 		return false;
