@@ -561,6 +561,15 @@ int Application::run() {
 		auto nextConnectionStatusLog = std::chrono::steady_clock::now();
 		std::string lastLocalPayload;
 
+		auto peerLabel = [&](const std::string& peerId) {
+			std::lock_guard<std::mutex> lock(knownDevicesMutex);
+			auto it = knownDevices.find(peerId);
+			if (it == knownDevices.end()) {
+				return peerId;
+			}
+			return describePeer(it->second);
+		};
+
 		auto enqueueSendFile = [&](const std::string& peerId, const std::string& relPath) {
 			if (!isTransferPathSafe(relPath)) {
 				return;
@@ -612,7 +621,7 @@ int Application::run() {
 				if (!tcp.sendMessage(peerId,
 				                     "SEND|" + relPath + "|" + std::to_string(fileSize) + "|0|" +
 				                         std::to_string(modifiedMs))) {
-					Logger::warn("transfer send failed (SEND): " + relPath + " -> " + peerId);
+					Logger::warn("transfer send failed (SEND): " + relPath + " -> " + peerLabel(peerId));
 					release();
 					return;
 				}
@@ -623,12 +632,14 @@ int Application::run() {
 					if (!state->cv.wait_for(lock, std::chrono::seconds(10), [&]() {
 						return state->resumeKnown || state->cancelled || !g_keepRunning.load();
 					})) {
-						Logger::warn("transfer SEND timed out waiting for resume: " + relPath + " -> " + peerId);
+						Logger::warn("transfer SEND timed out waiting for resume: " + relPath + " -> " +
+						             peerLabel(peerId));
 						release();
 						return;
 					}
 					if (state->cancelled || !g_keepRunning.load()) {
-						Logger::warn("transfer SEND cancelled before streaming: " + relPath + " -> " + peerId);
+						Logger::warn("transfer SEND cancelled before streaming: " + relPath + " -> " +
+						             peerLabel(peerId));
 						release();
 						return;
 					}
@@ -636,20 +647,20 @@ int Application::run() {
 				}
 
 				if (resumeOffset > fileSize) {
-					Logger::warn("transfer send invalid resume offset: " + relPath + " -> " + peerId);
+					Logger::warn("transfer send invalid resume offset: " + relPath + " -> " + peerLabel(peerId));
 					release();
 					return;
 				}
 
 				std::ifstream in(target, std::ios::binary);
 				if (!in.is_open()) {
-					Logger::warn("transfer send failed (open): " + target.string());
+					Logger::warn("transfer send failed (open): " + target.string() + " -> " + peerLabel(peerId));
 					release();
 					return;
 				}
 				in.seekg(static_cast<std::streamoff>(resumeOffset), std::ios::beg);
 				if (!in.good()) {
-					Logger::warn("transfer send failed (seek): " + target.string());
+					Logger::warn("transfer send failed (seek): " + target.string() + " -> " + peerLabel(peerId));
 					release();
 					return;
 				}
@@ -667,7 +678,7 @@ int Application::run() {
 					if (!tcp.sendMessage(peerId,
 					                     "DATA|" + relPath + "|" + std::to_string(offset) + "|" +
 					                         bytesToHex(chunk))) {
-						Logger::warn("transfer send failed (DATA): " + relPath + " -> " + peerId);
+						Logger::warn("transfer send failed (DATA): " + relPath + " -> " + peerLabel(peerId));
 						release();
 						return;
 					}
@@ -677,17 +688,18 @@ int Application::run() {
 				if (!tcp.sendMessage(peerId,
 				                     "DONE|" + relPath + "|" + std::to_string(fileSize) + "|" +
 				                         std::to_string(modifiedMs))) {
-					Logger::warn("transfer send failed (DONE): " + relPath + " -> " + peerId);
+					Logger::warn("transfer send failed (DONE): " + relPath + " -> " + peerLabel(peerId));
 					release();
 					return;
 				}
 
-				Logger::info("transfer sent: " + relPath + " -> " + peerId + " bytes=" + std::to_string(fileSize) +
-				             " resume=" + std::to_string(resumeOffset));
+				Logger::info("File transfer status: sent " + relPath + " -> " + peerLabel(peerId) +
+				             " bytes=" + std::to_string(fileSize) + " resume=" + std::to_string(resumeOffset));
 				release();
 				});
 			} catch (const std::exception& ex) {
-				Logger::warn("transfer queue rejected: " + relPath + " -> " + peerId + " reason=" + ex.what());
+				Logger::warn("transfer queue rejected: " + relPath + " -> " + peerLabel(peerId) +
+				             " reason=" + ex.what());
 				std::lock_guard<std::mutex> lock(transferMutex);
 				outboundInProgress.erase(key);
 				outboundTransfers.erase(key);
@@ -731,7 +743,7 @@ int Application::run() {
 				if (msg.rfind("READY|", 0) == 0 || msg.rfind("RESUME|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if (parts.size() < 4 || !isTransferPathSafe(parts[1])) {
-						Logger::warn("transfer READY/RESUME ignored (malformed): from=" + peerId);
+						Logger::warn("transfer READY/RESUME ignored (malformed): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -739,7 +751,7 @@ int Application::run() {
 					auto fileSize = parseUnsigned64(parts[3]);
 					auto modifiedMs = parts.size() >= 5 ? parseUnsigned64(parts[4]) : std::optional<std::uint64_t>{};
 					if (!offset.has_value() || !fileSize.has_value()) {
-						Logger::warn("transfer READY/RESUME ignored (invalid numbers): from=" + peerId);
+						Logger::warn("transfer READY/RESUME ignored (invalid numbers): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -767,17 +779,20 @@ int Application::run() {
 						}
 					}
 					state->cv.notify_all();
-					Logger::info(std::string(msg.rfind("RESUME|", 0) == 0 ? "transfer resume accepted: " : "transfer ready: ") +
-					             parts[1] + " <- " + peerId + " offset=" + std::to_string(*offset));
+					Logger::info(std::string(msg.rfind("RESUME|", 0) == 0 ? "File transfer status: resume accepted: " :
+					                                    "File transfer status: ready: ") +
+					             parts[1] + " <- " + peerLabel(peerId) + " offset=" + std::to_string(*offset));
 					continue;
 				}
 
 				if (msg.rfind("GET|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if (parts.size() != 2 || !isTransferPathSafe(parts[1])) {
-						Logger::warn("transfer GET ignored (malformed): from=" + peerId);
+						Logger::warn("transfer GET ignored (malformed): from=" + peerLabel(peerId));
 						continue;
 					}
+					Logger::info("File transfer status: request received for " + parts[1] + " from " +
+					             peerLabel(peerId));
 					enqueueSendFile(peerId, parts[1]);
 					continue;
 				}
@@ -785,7 +800,7 @@ int Application::run() {
 				if (msg.rfind("SEND|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if ((parts.size() != 4 && parts.size() != 5) || !isTransferPathSafe(parts[1])) {
-						Logger::warn("transfer SEND ignored (malformed): from=" + peerId);
+						Logger::warn("transfer SEND ignored (malformed): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -793,7 +808,7 @@ int Application::run() {
 					auto senderOffset = parseUnsigned64(parts[3]);
 					auto modifiedMs = parts.size() >= 5 ? parseUnsigned64(parts[4]) : std::optional<std::uint64_t>{0};
 					if (!fileSize.has_value() || !senderOffset.has_value() || !modifiedMs.has_value()) {
-						Logger::warn("transfer SEND ignored (invalid numbers): from=" + peerId);
+						Logger::warn("transfer SEND ignored (invalid numbers): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -803,7 +818,8 @@ int Application::run() {
 					std::error_code ec;
 					std::filesystem::create_directories(targetPath.parent_path(), ec);
 					if (ec) {
-						Logger::warn("transfer SEND ignored (mkdir failed): " + targetPath.parent_path().string());
+						Logger::warn("transfer SEND ignored (mkdir failed): " + targetPath.parent_path().string() +
+						             " from " + peerLabel(peerId));
 						continue;
 					}
 
@@ -853,7 +869,8 @@ int Application::run() {
 						}
 
 						if (!slot->out || !slot->out->is_open()) {
-							Logger::warn("transfer SEND ignored (temp open failed): " + tempPath.string());
+							Logger::warn("transfer SEND ignored (temp open failed): " + tempPath.string() +
+							             " from " + peerLabel(peerId));
 							continue;
 						}
 
@@ -868,25 +885,27 @@ int Application::run() {
 					}
 
 					if (!state || !state->out || !state->out->is_open()) {
-						Logger::warn("transfer SEND ignored (state unavailable): " + tempPath.string());
+						Logger::warn("transfer SEND ignored (state unavailable): " + tempPath.string() +
+						             " from " + peerLabel(peerId));
 						continue;
 					}
 
 					state->out->seekp(static_cast<std::streamoff>(resumeOffset), std::ios::beg);
 					if (!state->out->good()) {
-						Logger::warn("transfer SEND ignored (seek failed): " + tempPath.string());
+						Logger::warn("transfer SEND ignored (seek failed): " + tempPath.string() +
+						             " from " + peerLabel(peerId));
 						continue;
 					}
 
 					const std::string responseType = resumeOffset > 0 ? "RESUME" : "READY";
 					if (!tcp.sendMessage(peerId, responseType + "|" + parts[1] + "|" + std::to_string(resumeOffset) +
 					                               "|" + std::to_string(*fileSize) + "|" + std::to_string(*modifiedMs))) {
-						Logger::warn("transfer SEND response failed: " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer SEND response failed: " + parts[1] + " <- " + peerLabel(peerId));
 						continue;
 					}
 
-					Logger::info("transfer send accepted: " + parts[1] + " <- " + peerId +
-					             " offset=" + std::to_string(resumeOffset) +
+					Logger::info("File transfer status: send accepted: " + parts[1] + " <- " +
+					             peerLabel(peerId) + " offset=" + std::to_string(resumeOffset) +
 					             " size=" + std::to_string(*fileSize));
 					continue;
 				}
@@ -894,14 +913,14 @@ int Application::run() {
 				if (msg.rfind("DATA|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if (parts.size() != 4 || !isTransferPathSafe(parts[1])) {
-						Logger::warn("transfer DATA ignored (malformed): from=" + peerId);
+						Logger::warn("transfer DATA ignored (malformed): from=" + peerLabel(peerId));
 						continue;
 					}
 
 					auto offset = parseUnsigned64(parts[2]);
 					auto chunk = hexToBytes(parts[3]);
 					if (!offset.has_value() || !chunk.has_value()) {
-						Logger::warn("transfer DATA ignored (decode failed): from=" + peerId);
+						Logger::warn("transfer DATA ignored (decode failed): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -914,7 +933,8 @@ int Application::run() {
 
 					auto st = it->second;
 					if (!st || !st->out || !st->out->is_open()) {
-						Logger::warn("transfer DATA ignored (stream closed): " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer DATA ignored (stream closed): " + parts[1] + " <- " +
+						             peerLabel(peerId));
 						continue;
 					}
 
@@ -927,7 +947,8 @@ int Application::run() {
 					}
 
 					if (*offset < st->written) {
-						Logger::debug("transfer DATA duplicate chunk ignored: " + parts[1] + " <- " + peerId +
+						Logger::debug("transfer DATA duplicate chunk ignored: " + parts[1] + " <- " +
+						              peerLabel(peerId) +
 						              " offset=" + std::to_string(*offset));
 						continue;
 					}
@@ -936,14 +957,16 @@ int Application::run() {
 						st->written = *offset;
 					}
 					if (*offset != st->written) {
-						Logger::warn("transfer DATA aborted (offset/state mismatch): " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer DATA aborted (offset/state mismatch): " + parts[1] + " <- " +
+						             peerLabel(peerId));
 						continue;
 					}
 
 					st->out->write(chunk->data(), static_cast<std::streamsize>(chunk->size()));
 					if (!st->out->good()) {
 						st->out->close();
-						Logger::warn("transfer DATA aborted (write error): " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer DATA aborted (write error): " + parts[1] + " <- " +
+						             peerLabel(peerId));
 						continue;
 					}
 
@@ -955,14 +978,14 @@ int Application::run() {
 				if (msg.rfind("DONE|", 0) == 0) {
 					auto parts = splitByPipe(msg);
 					if (parts.size() != 4 || !isTransferPathSafe(parts[1])) {
-						Logger::warn("transfer DONE ignored (malformed): from=" + peerId);
+						Logger::warn("transfer DONE ignored (malformed): from=" + peerLabel(peerId));
 						continue;
 					}
 
 					auto fileSize = parseUnsigned64(parts[2]);
 					auto modifiedMs = parseUnsigned64(parts[3]);
 					if (!fileSize.has_value() || !modifiedMs.has_value()) {
-						Logger::warn("transfer DONE ignored (invalid numbers): from=" + peerId);
+						Logger::warn("transfer DONE ignored (invalid numbers): from=" + peerLabel(peerId));
 						continue;
 					}
 
@@ -983,7 +1006,8 @@ int Application::run() {
 					}
 
 					if (!st || !st->out || !st->out->is_open()) {
-						Logger::warn("transfer DONE ignored (stream closed): " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer DONE ignored (stream closed): " + parts[1] + " <- " +
+						             peerLabel(peerId));
 						continue;
 					}
 					st->out->flush();
@@ -992,7 +1016,8 @@ int Application::run() {
 					if (st->written != *fileSize || st->expectedSize != *fileSize) {
 						std::error_code rmEc;
 						std::filesystem::remove(st->tempPath, rmEc);
-						Logger::warn("transfer DONE aborted (size mismatch): " + parts[1] + " <- " + peerId);
+						Logger::warn("transfer DONE aborted (size mismatch): " + parts[1] + " <- " +
+						             peerLabel(peerId));
 						continue;
 					}
 
@@ -1003,7 +1028,8 @@ int Application::run() {
 					std::filesystem::rename(st->tempPath, st->targetPath, ec);
 					if (ec) {
 						std::filesystem::remove(st->tempPath, ec);
-						Logger::warn("transfer DONE failed finalize: " + st->targetPath.string());
+						Logger::warn("transfer DONE failed finalize: " + st->targetPath.string() +
+						             " <- " + peerLabel(peerId));
 						continue;
 					}
 
@@ -1012,8 +1038,8 @@ int Application::run() {
 						pendingDownloadRequests.erase(key);
 						incomingTransfers.erase(key);
 					}
-					Logger::info("transfer received: " + parts[1] + " <- " + peerId + " bytes=" +
-					             std::to_string(*fileSize));
+					Logger::info("File transfer status: received " + parts[1] + " <- " + peerLabel(peerId) +
+					             " bytes=" + std::to_string(*fileSize));
 					
 					// Track sync completion
 					{
@@ -1024,15 +1050,16 @@ int Application::run() {
 							size_t expected = expectedFilesPerDevice[peerId];
 							
 							// Show progress
-							Logger::info("SYNC PROGRESS: [" + std::to_string(completed) + "/" + 
-							             std::to_string(expected) + "] files completed from " + peerId);
+							Logger::info("SYNC PROGRESS: [" + std::to_string(completed) + "/" +
+							             std::to_string(expected) + "] files completed from " +
+							             peerLabel(peerId));
 							
 							// Check if all files synced
 							if (completed >= expected && devicesSyncCompleted.find(peerId) == devicesSyncCompleted.end()) {
 								devicesSyncCompleted.insert(peerId);
 								Logger::info("╔════════════════════════════════════════════╗");
 								Logger::info("║  SYNC COMPLETE - All files transferred! ✅  ║");
-								Logger::info("║  Device: " + peerId);
+								Logger::info("║  Device: " + peerLabel(peerId));
 								Logger::info("║  Total: " + std::to_string(expected) + " files synced");
 								Logger::info("║  Location: " + syncFolder);
 								Logger::info("╚════════════════════════════════════════════╝");
@@ -1173,6 +1200,7 @@ int Application::run() {
 
 			std::string event = "discovered";
 			bool isNewDevice = false;
+			size_t knownDeviceCount = 0;
 			{
 				std::lock_guard<std::mutex> lock(knownDevicesMutex);
 				auto it = knownDevices.find(peer->deviceId);
@@ -1183,15 +1211,16 @@ int Application::run() {
 					event = "updated";
 					it->second = *peer;
 				}
+				knownDeviceCount = knownDevices.size();
 			}
 
 			Logger::info("Peer " + event + ": " + describePeer(*peer));
 			Logger::info("Connection status: peer=" + describePeer(*peer) +
-			             " known_devices=" + std::to_string(knownDevices.size()) +
+			             " known_devices=" + std::to_string(knownDeviceCount) +
 			             " tcp_connected_peers=" + std::to_string(tcp.getConnectedPeers().size()));
 			
 			// Trigger initial sync folder scan and transfer when second device connects
-			if (isNewDevice && knownDevices.size() == 2 && !syncFolderInitialSyncTriggered) {
+			if (isNewDevice && knownDeviceCount == 2 && !syncFolderInitialSyncTriggered) {
 				syncFolderInitialSyncTriggered = true;
 				
 				auto syncPaths = collectSyncPaths(std::filesystem::path(syncFolder));
