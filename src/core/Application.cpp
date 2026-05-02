@@ -437,6 +437,9 @@ int Application::run() {
 	if (!tcpStarted) {
 		Logger::warn("TCP handshake listener failed to start on port " + std::to_string(configuredPort) +
 		             "; continuing with local-only sync mode");
+		Logger::info("Connection status: tcp_listener=disabled discovery=active connected_peers=0");
+	} else {
+		Logger::info("Connection status: tcp_listener=active discovery=active connected_peers=0");
 	}
 
 	SyncEngine syncEngine(syncFolder, mirrorFolder);
@@ -482,6 +485,7 @@ int Application::run() {
 
 	Logger::info("Discovery loop started. Press Ctrl+C to stop.");
 	Logger::info("Waiting for another device to connect...");
+	Logger::info("Connection status: known_devices=0 tcp_connected_peers=0 discovery=active");
 	std::mutex knownDevicesMutex;
 	std::unordered_map<std::string, DeviceDiscovery::PeerInfo> knownDevices;
 	bool syncFolderInitialSyncTriggered = false;
