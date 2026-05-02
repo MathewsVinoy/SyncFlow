@@ -459,6 +459,7 @@ int Application::run() {
 	std::signal(SIGTERM, handleStopSignal);
 
 	Logger::info("Discovery loop started. Press Ctrl+C to stop.");
+	Logger::info("Waiting for another device to connect...");
 	std::mutex knownDevicesMutex;
 	std::unordered_map<std::string, DeviceDiscovery::PeerInfo> knownDevices;
 	bool syncFolderInitialSyncTriggered = false;
@@ -504,6 +505,7 @@ int Application::run() {
 		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
 		auto nextTransferSweep = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		auto nextPeerStatusLog = std::chrono::steady_clock::now();
 		std::string lastLocalPayload;
 
 		auto enqueueSendFile = [&](const std::string& peerId, const std::string& relPath) {
@@ -1086,6 +1088,10 @@ int Application::run() {
 
 			auto peer = discovery.receiver(800);
 			if (!peer.has_value()) {
+				if (now >= nextPeerStatusLog) {
+					Logger::info("Waiting for another device to connect...");
+					nextPeerStatusLog = now + std::chrono::seconds(10);
+				}
 				continue;
 			}
 
