@@ -319,6 +319,32 @@ std::string transferKey(const std::string& peerId, const std::string& relPath) {
 	return peerId + "|" + relPath;
 }
 
+std::string joinStrings(const std::vector<std::string>& values, const std::string& delimiter) {
+	std::string out;
+	for (const auto& value : values) {
+		if (!out.empty()) {
+			out += delimiter;
+		}
+		out += value;
+	}
+	return out;
+}
+
+std::string describePeer(const std::string& deviceId, const std::string& deviceName, const std::string& ip,
+	                     std::uint16_t port) {
+	std::string label = deviceName.empty() ? deviceId : deviceName;
+	label += " (id=" + deviceId + ", ip=" + ip + ", port=" + std::to_string(port) + ")";
+	return label;
+}
+
+std::string describePeer(const DeviceDiscovery::PeerInfo& peer) {
+	return describePeer(peer.deviceId, peer.deviceName, peer.ip, peer.port);
+}
+
+std::string describePeer(const TcpHandshake::RemoteDevice& peer) {
+	return describePeer(peer.deviceId, peer.deviceName, peer.ip, peer.port);
+}
+
 std::string tempTransferPath(const std::filesystem::path& targetPath, const std::string& peerId) {
 	return targetPath.string() + ".part." + peerId;
 }
@@ -677,6 +703,11 @@ int Application::run() {
 
 			if (now >= nextConnectionStatusLog) {
 				const auto connectedPeers = tcp.getConnectedPeers();
+				std::vector<std::string> connectedPeerLabels;
+				connectedPeerLabels.reserve(connectedPeers.size());
+				for (const auto& peer : connectedPeers) {
+					connectedPeerLabels.push_back(describePeer(peer));
+				}
 				size_t knownDeviceCount = 0;
 				{
 					std::lock_guard<std::mutex> lock(knownDevicesMutex);
@@ -685,7 +716,8 @@ int Application::run() {
 
 				Logger::info("Connection status: known_devices=" + std::to_string(knownDeviceCount) +
 				             " tcp_connected_peers=" + std::to_string(connectedPeers.size()) +
-				             " discovery=active");
+				             " discovery=active connected_peer_list=[" +
+				             joinStrings(connectedPeerLabels, ", ") + "]");
 				if (connectedPeers.empty() && knownDeviceCount == 0) {
 					Logger::info("Termux/mobile note: if no peers appear, broadcast discovery may be blocked by the network");
 				}
@@ -1153,21 +1185,23 @@ int Application::run() {
 				}
 			}
 
-			std::cout << "Connected device: " << peer->deviceName << " (" << peer->ip << ':' << peer->port << ")"
-			          << std::endl;
-			Logger::info("Device " + event + ": id=" + peer->deviceId + " name=" + peer->deviceName +
-			             " ip=" + peer->ip + " port=" + std::to_string(peer->port));
+			Logger::info("Peer " + event + ": " + describePeer(*peer));
+			Logger::info("Connection status: peer=" + describePeer(*peer) +
+			             " known_devices=" + std::to_string(knownDevices.size()) +
+			             " tcp_connected_peers=" + std::to_string(tcp.getConnectedPeers().size()));
 			
 			// Trigger initial sync folder scan and transfer when second device connects
 			if (isNewDevice && knownDevices.size() == 2 && !syncFolderInitialSyncTriggered) {
 				syncFolderInitialSyncTriggered = true;
 				
 				auto syncPaths = collectSyncPaths(std::filesystem::path(syncFolder));
-				Logger::info("Initial sync folder scan triggered. Found " + std::to_string(syncPaths.size()) + 
-				             " files to sync with second device");
+				Logger::info("Initial sync folder scan triggered for " + describePeer(*peer) +
+				             ". Found " + std::to_string(syncPaths.size()) +
+				             " files to sync with the second connected device");
 				
 				if (!syncPaths.empty()) {
-					Logger::info("sync folder content to transfer: ");
+					Logger::info("File transfer status: preparing initial sync for " + describePeer(*peer));
+					Logger::info("sync folder content to transfer:");
 					for (const auto& path : syncPaths) {
 						Logger::info("  - " + path);
 					}
@@ -1180,6 +1214,7 @@ int Application::run() {
 					}
 				} else {
 					Logger::info("No files to sync - sync folder is empty!");
+					Logger::info("File transfer status: nothing to transfer for " + describePeer(*peer));
 					{
 						std::lock_guard<std::mutex> lock(syncCompletionMutex);
 						devicesSyncCompleted.insert(peer->deviceId);
