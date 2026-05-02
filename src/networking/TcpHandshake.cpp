@@ -782,6 +782,10 @@ std::string opensslErrorString() {
 	return std::string(buf);
 }
 
+int acceptAllCertificates(int /*preverifyOk*/, X509_STORE_CTX* /*ctx*/) {
+	return 1;
+}
+
 bool waitSocketReady(SocketHandle fd, bool forRead, int timeoutMs) {
 	fd_set set;
 	FD_ZERO(&set);
@@ -1395,8 +1399,8 @@ bool TcpHandshake::ensureTlsInitializedLocked() {
 
 	SSL_CTX_set_min_proto_version(serverTlsContext_, TLS1_2_VERSION);
 	SSL_CTX_set_min_proto_version(clientTlsContext_, TLS1_2_VERSION);
-	SSL_CTX_set_verify(serverTlsContext_, SSL_VERIFY_NONE, nullptr);
-	SSL_CTX_set_verify(clientTlsContext_, SSL_VERIFY_NONE, nullptr);
+	SSL_CTX_set_verify(serverTlsContext_, SSL_VERIFY_PEER, acceptAllCertificates);
+	SSL_CTX_set_verify(clientTlsContext_, SSL_VERIFY_PEER, acceptAllCertificates);
 
 	if (SSL_CTX_use_certificate_file(serverTlsContext_, tlsCertPath_.c_str(), SSL_FILETYPE_PEM) != 1 ||
 	    SSL_CTX_use_PrivateKey_file(serverTlsContext_, tlsKeyPath_.c_str(), SSL_FILETYPE_PEM) != 1 ||
