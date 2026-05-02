@@ -528,6 +528,7 @@ int Application::run() {
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
 		auto nextTransferSweep = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 		auto nextPeerStatusLog = std::chrono::steady_clock::now();
+		auto nextConnectionStatusLog = std::chrono::steady_clock::now();
 		std::string lastLocalPayload;
 
 		auto enqueueSendFile = [&](const std::string& peerId, const std::string& relPath) {
@@ -664,9 +665,27 @@ int Application::run() {
 		};
 
 		while (g_keepRunning.load()) {
+			const auto now = std::chrono::steady_clock::now();
 			tcp.tick();
 			while (auto evt = tcp.pollEvent()) {
 				Logger::info(*evt);
+			}
+
+			if (now >= nextConnectionStatusLog) {
+				const auto connectedPeers = tcp.getConnectedPeers();
+				size_t knownDeviceCount = 0;
+				{
+					std::lock_guard<std::mutex> lock(knownDevicesMutex);
+					knownDeviceCount = knownDevices.size();
+				}
+
+				Logger::info("Connection status: known_devices=" + std::to_string(knownDeviceCount) +
+				             " tcp_connected_peers=" + std::to_string(connectedPeers.size()) +
+				             " discovery=active");
+				if (connectedPeers.empty() && knownDeviceCount == 0) {
+					Logger::info("Termux/mobile note: if no peers appear, broadcast discovery may be blocked by the network");
+				}
+				nextConnectionStatusLog = now + std::chrono::seconds(5);
 			}
 
 			while (auto inbound = tcp.pollMessage()) {
@@ -1067,7 +1086,6 @@ int Application::run() {
 				}
 			}
 
-			const auto now = std::chrono::steady_clock::now();
 			if (now >= nextTransferSweep) {
 				std::vector<std::string> expiredKeys;
 				{
