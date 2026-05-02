@@ -1302,8 +1302,7 @@ int Application::run() {
 			}
 
 			for (const auto& peer : removedPeers) {
-				Logger::info("Device removed: id=" + peer.deviceId + " name=" + peer.deviceName +
-				             " ip=" + peer.ip + " port=" + std::to_string(peer.port));
+				Logger::info("Peer removed: " + describePeer(peer));
 				{
 					std::lock_guard<std::mutex> lock(remoteMetadataMutex);
 					remoteMetadataByDevice.erase(peer.deviceId);
