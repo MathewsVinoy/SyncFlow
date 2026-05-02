@@ -462,6 +462,12 @@ int Application::run() {
 	std::mutex knownDevicesMutex;
 	std::unordered_map<std::string, DeviceDiscovery::PeerInfo> knownDevices;
 	bool syncFolderInitialSyncTriggered = false;
+	
+	// Sync completion tracking
+	std::mutex syncCompletionMutex;
+	std::unordered_map<std::string, size_t> expectedFilesPerDevice;  // peerId -> count
+	std::unordered_map<std::string, size_t> completedFilesPerDevice; // peerId -> count
+	std::unordered_set<std::string> devicesSyncCompleted;            // track completed syncs
 
 	std::thread senderThread([&discovery, broadcastIntervalMs]() {
 		while (g_keepRunning.load()) {
@@ -490,7 +496,11 @@ int Application::run() {
 	                           &outboundTransfers,
 	                           &transferWorkerPool,
 	                           &syncFolder,
-	                           &syncFolderInitialSyncTriggered]() {
+	                           &syncFolderInitialSyncTriggered,
+	                           &syncCompletionMutex,
+	                           &expectedFilesPerDevice,
+	                           &completedFilesPerDevice,
+	                           &devicesSyncCompleted]() {
 		auto nextMetadataBroadcast = std::chrono::steady_clock::now();
 		auto nextForcedMetadataBroadcast = std::chrono::steady_clock::now() + std::chrono::seconds(15);
 		auto nextTransferSweep = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -925,6 +935,31 @@ int Application::run() {
 					}
 					Logger::info("transfer received: " + parts[1] + " <- " + peerId + " bytes=" +
 					             std::to_string(*fileSize));
+					
+					// Track sync completion
+					{
+						std::lock_guard<std::mutex> lock(syncCompletionMutex);
+						if (expectedFilesPerDevice.find(peerId) != expectedFilesPerDevice.end()) {
+							completedFilesPerDevice[peerId]++;
+							size_t completed = completedFilesPerDevice[peerId];
+							size_t expected = expectedFilesPerDevice[peerId];
+							
+							// Show progress
+							Logger::info("SYNC PROGRESS: [" + std::to_string(completed) + "/" + 
+							             std::to_string(expected) + "] files completed from " + peerId);
+							
+							// Check if all files synced
+							if (completed >= expected && devicesSyncCompleted.find(peerId) == devicesSyncCompleted.end()) {
+								devicesSyncCompleted.insert(peerId);
+								Logger::info("╔════════════════════════════════════════════╗");
+								Logger::info("║  SYNC COMPLETE - All files transferred! ✅  ║");
+								Logger::info("║  Device: " + peerId);
+								Logger::info("║  Total: " + std::to_string(expected) + " files synced");
+								Logger::info("║  Location: " + syncFolder);
+								Logger::info("╚════════════════════════════════════════════╝");
+							}
+						}
+					}
 					continue;
 				}
 
@@ -1085,6 +1120,24 @@ int Application::run() {
 					Logger::info("sync folder content to transfer: ");
 					for (const auto& path : syncPaths) {
 						Logger::info("  - " + path);
+					}
+					
+					// Track expected files for this peer
+					{
+						std::lock_guard<std::mutex> lock(syncCompletionMutex);
+						expectedFilesPerDevice[peer->deviceId] = syncPaths.size();
+						completedFilesPerDevice[peer->deviceId] = 0;
+					}
+				} else {
+					Logger::info("No files to sync - sync folder is empty!");
+					{
+						std::lock_guard<std::mutex> lock(syncCompletionMutex);
+						devicesSyncCompleted.insert(peer->deviceId);
+						Logger::info("╔════════════════════════════════════════════╗");
+						Logger::info("║  SYNC COMPLETE - All files synced! ✅     ║");
+						Logger::info("║  Folder: " + syncFolder);
+						Logger::info("║  Status: 0/0 files (folder empty)         ║");
+						Logger::info("╚════════════════════════════════════════════╝");
 					}
 				}
 			}
