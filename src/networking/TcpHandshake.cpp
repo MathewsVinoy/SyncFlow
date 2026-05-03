@@ -1045,8 +1045,10 @@ TcpHandshake::TcpHandshake(std::string localDeviceId, std::string localDeviceNam
 	: localDeviceId_(std::move(localDeviceId)),
 	  localDeviceName_(std::move(localDeviceName)),
 	  listenPort_(listenPort),
+	  udpPort_(listenPort + 1),  // UDP port is TCP port + 1
 	  running_(false),
 	  listenSocket_(static_cast<std::intptr_t>(kInvalidSocket)),
+	  udpListenSocket_(static_cast<std::intptr_t>(kInvalidSocket)),
 	  serverTlsContext_(nullptr),
 	  clientTlsContext_(nullptr) {}
 
@@ -1101,6 +1103,32 @@ bool TcpHandshake::start() {
 	running_ = true;
 	listenSocket_ = static_cast<std::intptr_t>(fd);
 	pushEventLocked("TLS/TCP started on port " + std::to_string(listenPort_));
+
+	// Initialize UDP socket for fallback/alternative connections
+	const SocketHandle udpFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (udpFd != kInvalidSocket) {
+		int reuseUdp = 1;
+		if (setsockopt(udpFd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuseUdp), sizeof(reuseUdp)) >= 0) {
+			sockaddr_in udpAddr{};
+			udpAddr.sin_family = AF_INET;
+			udpAddr.sin_port = htons(udpPort_);
+			udpAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+			if (bind(udpFd, reinterpret_cast<const sockaddr*>(&udpAddr), static_cast<SocketLen>(sizeof(udpAddr))) >= 0 &&
+			    setNonBlocking(udpFd, true)) {
+				udpListenSocket_ = static_cast<std::intptr_t>(udpFd);
+				pushEventLocked("UDP fallback channel started on port " + std::to_string(udpPort_));
+				Logger::info("UDP fallback channel started on port " + std::to_string(udpPort_));
+			} else {
+				closeSocket(udpFd);
+				Logger::warn("UDP fallback channel bind/listen failed; TCP-only mode");
+			}
+		} else {
+			closeSocket(udpFd);
+		}
+	} else {
+		Logger::warn("UDP fallback socket creation failed; TCP-only mode");
+	}
+
 	return true;
 }
 
@@ -1316,6 +1344,9 @@ void TcpHandshake::acceptIncoming() {
 
 		pushEventLocked("TLS connected (incoming): id=" + remote->deviceId + " ip=" + remote->ip +
 		               " port=" + std::to_string(remote->port));
+		Logger::info("Device connection established (incoming): name=" + remote->deviceName + " id=" + 
+		           remote->deviceId + " ip=" + remote->ip + " port=" + std::to_string(remote->port) + 
+		           " protocol=TLS/TCP direction=inbound");
 	}
 }
 
@@ -1570,6 +1601,9 @@ bool TcpHandshake::connectAndHandshakeLocked(ConnectionState& st) {
 
 	pushEventLocked("TLS connected (outgoing): id=" + remote->deviceId + " ip=" + remote->ip +
 	               " port=" + std::to_string(remote->port));
+	Logger::info("Device connection established (outgoing): name=" + remote->deviceName + " id=" + 
+	           remote->deviceId + " ip=" + remote->ip + " port=" + std::to_string(remote->port) + 
+	           " protocol=TLS/TCP direction=outbound");
 	return true;
 }
 

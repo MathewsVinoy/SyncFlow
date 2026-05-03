@@ -16,16 +16,24 @@ struct ssl_st;
 
 class TcpHandshake {
 public:
+	enum class ConnectionProtocol {
+		TCP_TLS,  // TCP with TLS encryption
+		UDP,      // UDP (for faster, best-effort transfers)
+		UNKNOWN
+	};
+
 	struct RemoteDevice {
 		std::string deviceId;
 		std::string deviceName;
 		std::string ip;
 		std::uint16_t port;
+		ConnectionProtocol protocol = ConnectionProtocol::TCP_TLS;  // Primary protocol
 	};
 
 	struct InboundMessage {
 		std::string deviceId;
 		std::string payload;
+		ConnectionProtocol protocol = ConnectionProtocol::TCP_TLS;
 	};
 
 	TcpHandshake(std::string localDeviceId, std::string localDeviceName, std::uint16_t listenPort);
@@ -38,20 +46,25 @@ public:
 	void observePeer(const RemoteDevice& peer);
 	void removePeer(const std::string& deviceId);
 	bool sendMessage(const std::string& deviceId, const std::string& payload);
+	bool sendMessageUdp(const std::string& deviceId, const std::string& payload);  // New UDP method
 
 	std::optional<std::string> pollEvent();
 	std::optional<InboundMessage> pollMessage();
 	std::vector<RemoteDevice> getConnectedPeers() const;
+	ConnectionProtocol getConnectionProtocol(const std::string& deviceId) const;  // Query protocol for device
 
 private:
 	struct ConnectionState {
 		RemoteDevice remote;
 		std::intptr_t socket = -1;
+		std::intptr_t udpSocket = -1;  // Separate UDP socket
 		ssl_st* ssl = nullptr;
 		bool connected = false;
+		bool udpConnected = false;  // UDP fallback status
 		bool outbound = false;
 		std::string tlsPeerDeviceId;
 		std::string readBuffer;
+		ConnectionProtocol activeProtocol = ConnectionProtocol::TCP_TLS;
 		std::chrono::steady_clock::time_point lastPingSent{};
 		std::chrono::steady_clock::time_point lastPongSeen{};
 		std::chrono::steady_clock::time_point nextRetry{};
@@ -60,8 +73,10 @@ private:
 	std::string localDeviceId_;
 	std::string localDeviceName_;
 	std::uint16_t listenPort_;
+	std::uint16_t udpPort_;  // Separate UDP port
 	bool running_;
 	std::intptr_t listenSocket_;
+	std::intptr_t udpListenSocket_ = -1;  // UDP listener
 	ssl_ctx_st* serverTlsContext_;
 	ssl_ctx_st* clientTlsContext_;
 	std::string tlsRootDir_;
@@ -77,6 +92,7 @@ private:
 
 	void pushEventLocked(const std::string& event);
 	void acceptIncoming();
+	void acceptIncomingUdp();  // UDP acceptance
 	void processConnections();
 	void closeConnectionTransportLocked(ConnectionState& state);
 	void disconnectLocked(ConnectionState& state, const std::string& reason);
@@ -85,6 +101,7 @@ private:
 	bool isPeerTrustedLocked(const std::string& deviceId) const;
 	bool connectAndHandshakeLocked(ConnectionState& state);
 	bool processIncomingLinesLocked(ConnectionState& state);
+	bool tryUdpFallbackLocked(ConnectionState& state);  // UDP fallback attempt
 
 	static bool isValidDeviceId(const std::string& value);
 	static bool isValidDeviceName(const std::string& value);
