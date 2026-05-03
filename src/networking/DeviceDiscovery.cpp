@@ -11,6 +11,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -31,6 +32,42 @@ bool isDigitsOnly(const std::string& value) {
 std::string buildProbeMessage(std::uint16_t discoveryPort) {
 	return std::string("255.255.255.255:") + std::to_string(discoveryPort);
 }
+
+std::vector<std::string> buildDiscoveryTargets(std::uint16_t /*discoveryPort*/) {
+	std::unordered_set<std::string> unique;
+	unique.insert("255.255.255.255");
+
+	if (auto localAddresses = platform::PlatformSocket::getLocalAddresses(); localAddresses.has_value()) {
+		for (const auto& ip : *localAddresses) {
+			std::array<int, 4> octets{0, 0, 0, 0};
+			char dot = '\0';
+			std::stringstream ss(ip);
+			if ((ss >> octets[0] >> dot >> octets[1] >> dot >> octets[2] >> dot >> octets[3]) &&
+			    octets[0] >= 0 && octets[0] <= 255 &&
+			    octets[1] >= 0 && octets[1] <= 255 &&
+			    octets[2] >= 0 && octets[2] <= 255 &&
+			    octets[3] >= 0 && octets[3] <= 255) {
+				unique.insert(std::to_string(octets[0]) + "." + std::to_string(octets[1]) + "." +
+				             std::to_string(octets[2]) + ".255");
+			}
+		}
+	}
+
+	// Common Android USB/Wi-Fi tethering LANs.
+	unique.insert("192.168.42.255");
+	unique.insert("192.168.43.255");
+	unique.insert("172.20.10.255");
+	unique.insert("10.42.0.255");
+
+	std::vector<std::string> targets;
+	targets.reserve(unique.size());
+	for (const auto& value : unique) {
+		targets.push_back(value);
+	}
+	std::sort(targets.begin(), targets.end());
+	return targets;
+}
+
 constexpr std::chrono::milliseconds kDefaultInactiveTimeout{15000};
 }  // namespace
 
@@ -57,23 +94,28 @@ bool DeviceDiscovery::sender() const {
 	}
 
 	const std::string payload = buildProbeMessage(discoveryPort_);
+	const auto targets = buildDiscoveryTargets(discoveryPort_);
 	int sentCount = 0;
-	if (socket->sendTo("255.255.255.255", discoveryPort_, payload)) {
-		++sentCount;
-		Logger::info("Discovery TX probe: to=255.255.255.255:" + std::to_string(discoveryPort_) +
-		             " payload='" + payload + "'");
-	} else {
-		Logger::warn("Discovery TX probe failed: to=255.255.255.255:" + std::to_string(discoveryPort_));
+	for (const auto& target : targets) {
+		if (socket->sendTo(target, discoveryPort_, payload)) {
+			++sentCount;
+			Logger::info("Discovery TX probe: to=" + target + ":" + std::to_string(discoveryPort_) +
+			             " payload='" + payload + "'");
+		} else {
+			Logger::warn("Discovery TX probe failed: to=" + target + ":" + std::to_string(discoveryPort_));
+		}
 	}
 
 	const std::string announce = std::string(kResponsePrefix) + "|" + deviceId_ + "|" + deviceName_ + "|" +
 	                             std::to_string(servicePort_);
-	if (socket->sendTo("255.255.255.255", discoveryPort_, announce)) {
-		++sentCount;
-		Logger::info("Discovery TX announce: to=255.255.255.255:" + std::to_string(discoveryPort_) +
-		             " payload='" + announce + "'");
-	} else {
-		Logger::warn("Discovery TX announce failed: to=255.255.255.255:" + std::to_string(discoveryPort_));
+	for (const auto& target : targets) {
+		if (socket->sendTo(target, discoveryPort_, announce)) {
+			++sentCount;
+			Logger::info("Discovery TX announce: to=" + target + ":" + std::to_string(discoveryPort_) +
+			             " payload='" + announce + "'");
+		} else {
+			Logger::warn("Discovery TX announce failed: to=" + target + ":" + std::to_string(discoveryPort_));
+		}
 	}
 
 	platform::PlatformSocket::shutdownSocketSystem();
