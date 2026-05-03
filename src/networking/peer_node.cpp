@@ -132,6 +132,23 @@ std::filesystem::path executable_dir() {
     return std::filesystem::path(buffer.data()).parent_path();
 }
 
+std::filesystem::path find_config_path() {
+    const std::array<std::filesystem::path, 4> candidates{
+        std::filesystem::current_path() / "config.json",
+        executable_dir() / "config.json",
+        executable_dir().parent_path() / "config.json",
+        executable_dir().parent_path().parent_path() / "config.json"
+    };
+
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return candidates.front();
+}
+
 bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds timeout, std::string& error_text) {
     const int old_flags = ::fcntl(fd, F_GETFL, 0);
     if (old_flags < 0) {
@@ -195,7 +212,7 @@ PeerNode::PeerNode(std::string device_name)
         : device_name_(std::move(device_name)),
             local_ip_(platform::get_local_ipv4()),
             logger_(device_name_, local_ip_),
-            file_sync_config_(syncflow::file_sync::load_config(executable_dir() / "config.json")) {}
+            file_sync_config_(syncflow::file_sync::load_config(find_config_path())) {}
 
 void PeerNode::run() {
     platform::install_signal_handlers(running_);
