@@ -121,6 +121,17 @@ std::string sanitize_filename(const std::string& filename) {
     return std::filesystem::path(filename).filename().string();
 }
 
+std::filesystem::path executable_dir() {
+    std::array<char, 4096> buffer{};
+    const ssize_t len = ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+    if (len <= 0) {
+        return std::filesystem::current_path();
+    }
+
+    buffer[static_cast<std::size_t>(len)] = '\0';
+    return std::filesystem::path(buffer.data()).parent_path();
+}
+
 bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds timeout, std::string& error_text) {
     const int old_flags = ::fcntl(fd, F_GETFL, 0);
     if (old_flags < 0) {
@@ -184,7 +195,7 @@ PeerNode::PeerNode(std::string device_name)
         : device_name_(std::move(device_name)),
             local_ip_(platform::get_local_ipv4()),
             logger_(device_name_, local_ip_),
-            file_sync_config_(syncflow::file_sync::load_config("config.json")) {}
+            file_sync_config_(syncflow::file_sync::load_config(executable_dir() / "config.json")) {}
 
 void PeerNode::run() {
     platform::install_signal_handlers(running_);

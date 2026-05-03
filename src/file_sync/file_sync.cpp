@@ -18,6 +18,13 @@ std::string read_all_text(const std::filesystem::path& path) {
     return buffer.str();
 }
 
+std::filesystem::path resolve_relative(const std::filesystem::path& base_dir, const std::filesystem::path& value) {
+    if (value.is_absolute()) {
+        return value;
+    }
+    return base_dir / value;
+}
+
 std::string extract_string_value(const std::string& content, const std::string& key) {
     const std::string needle = "\"" + key + "\"";
     const auto key_pos = content.find(needle);
@@ -79,16 +86,18 @@ FileSyncConfig load_config(const std::filesystem::path& config_path) {
         return config;
     }
 
+    const std::filesystem::path base_dir = config_path.has_parent_path() ? config_path.parent_path() : std::filesystem::current_path();
+
     config.enabled = extract_bool_value(content, "enabled", false);
 
     const std::string source = extract_string_value(content, "source_path");
     if (!source.empty()) {
-        config.source_path = source;
+        config.source_path = resolve_relative(base_dir, source);
     }
 
     const std::string receive_dir = extract_string_value(content, "receive_dir");
     if (!receive_dir.empty()) {
-        config.receive_dir = receive_dir;
+        config.receive_dir = resolve_relative(base_dir, receive_dir);
     }
 
     return config;

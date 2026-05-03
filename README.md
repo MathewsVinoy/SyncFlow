@@ -58,7 +58,7 @@ Edit [config.json](config.json) to choose the file to send:
 
 If `source_path` points to a folder, the whole directory tree is synced.
 
-The repo includes [sample_sync_dir](sample_sync_dir) as a demo folder tree.
+The default config uses [sample_sync_dir](sample_sync_dir) as a demo folder tree.
 
 If no name is provided, the hostname is used.
 
