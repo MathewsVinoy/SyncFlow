@@ -6,8 +6,12 @@
 #include <algorithm>
 #include <array>
 #include <arpa/inet.h>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -37,6 +41,63 @@ bool send_all(int fd, const std::string& data) {
         remaining -= static_cast<std::size_t>(sent);
     }
 
+    return true;
+}
+
+bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds timeout, std::string& error_text) {
+    const int old_flags = ::fcntl(fd, F_GETFL, 0);
+    if (old_flags < 0) {
+        error_text = std::strerror(errno);
+        return false;
+    }
+
+    if (::fcntl(fd, F_SETFL, old_flags | O_NONBLOCK) != 0) {
+        error_text = std::strerror(errno);
+        return false;
+    }
+
+    const int connect_rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+    if (connect_rc == 0) {
+        (void)::fcntl(fd, F_SETFL, old_flags);
+        return true;
+    }
+
+    if (errno != EINPROGRESS) {
+        error_text = std::strerror(errno);
+        (void)::fcntl(fd, F_SETFL, old_flags);
+        return false;
+    }
+
+    fd_set write_set;
+    FD_ZERO(&write_set);
+    FD_SET(fd, &write_set);
+
+    timeval tv{};
+    tv.tv_sec = timeout.count();
+    tv.tv_usec = 0;
+
+    const int select_rc = ::select(fd + 1, nullptr, &write_set, nullptr, &tv);
+    if (select_rc <= 0) {
+        error_text = (select_rc == 0) ? "timeout" : std::strerror(errno);
+        (void)::fcntl(fd, F_SETFL, old_flags);
+        return false;
+    }
+
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+    if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) != 0) {
+        error_text = std::strerror(errno);
+        (void)::fcntl(fd, F_SETFL, old_flags);
+        return false;
+    }
+
+    if (so_error != 0) {
+        error_text = std::strerror(so_error);
+        (void)::fcntl(fd, F_SETFL, old_flags);
+        return false;
+    }
+
+    (void)::fcntl(fd, F_SETFL, old_flags);
     return true;
 }
 
@@ -89,21 +150,39 @@ void PeerNode::log_startup() {
 }
 
 bool PeerNode::should_initiate(const PeerInfo& peer) const {
-    if (peer.name == device_name_ && peer.ip == local_ip_) {
-        return false;
-    }
-
-    if (device_name_ != peer.name) {
-        return device_name_ < peer.name;
-    }
-
-    return local_ip_ < peer.ip;
+    return !(peer.name == device_name_ && peer.ip == local_ip_);
 }
 
 bool PeerNode::is_active(const PeerInfo& peer) {
     const auto key = endpoint_key(peer);
     std::lock_guard<std::mutex> guard(active_mutex_);
     return active_connections_.find(key) != active_connections_.end();
+}
+
+bool PeerNode::should_attempt_connect(const PeerInfo& peer) {
+    const auto key = endpoint_key(peer);
+    const auto now = std::chrono::steady_clock::now();
+
+    std::lock_guard<std::mutex> guard(connect_mutex_);
+
+    if (pending_connections_.find(key) != pending_connections_.end()) {
+        return false;
+    }
+
+    const auto it = last_connect_attempt_.find(key);
+    if (it != last_connect_attempt_.end() && (now - it->second) < config::kConnectRetryInterval) {
+        return false;
+    }
+
+    pending_connections_.insert(key);
+    last_connect_attempt_[key] = now;
+    return true;
+}
+
+void PeerNode::clear_pending_connect(const PeerInfo& peer) {
+    const auto key = endpoint_key(peer);
+    std::lock_guard<std::mutex> guard(connect_mutex_);
+    pending_connections_.erase(key);
 }
 
 void PeerNode::mark_active(const PeerInfo& peer) {
@@ -116,10 +195,44 @@ void PeerNode::mark_inactive(const PeerInfo& peer) {
     active_connections_.erase(endpoint_key(peer));
 }
 
+bool PeerNode::try_acquire_share_slot(const PeerInfo& peer) {
+    const auto key = endpoint_key(peer);
+    std::lock_guard<std::mutex> guard(share_mutex_);
+    if (!share_in_progress_) {
+        share_in_progress_ = true;
+        share_peer_key_ = key;
+        return true;
+    }
+
+    return share_peer_key_ == key;
+}
+
+void PeerNode::release_share_slot(const PeerInfo& peer) {
+    const auto key = endpoint_key(peer);
+    std::lock_guard<std::mutex> guard(share_mutex_);
+    if (share_in_progress_ && share_peer_key_ == key) {
+        share_in_progress_ = false;
+        share_peer_key_.clear();
+    }
+}
+
 void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& direction) {
+    if (!try_acquire_share_slot(peer)) {
+        const std::string busy = "SHARE_BUSY|" + device_name_ + "|" + local_ip_ + "\n";
+        (void)send_all(fd, busy);
+        logger_.info("share already in progress, rejected connection from " + peer.name + " @ " + peer.ip);
+        close_socket(fd);
+        return;
+    }
+
     mark_active(peer);
     logger_.info(direction + " connection established with " + peer.name + " @ " + peer.ip + ":" + std::to_string(peer.tcp_port));
     logger_.info("connected successfully with " + peer.name + " @ " + peer.ip);
+
+    if (direction == "inbound") {
+        const std::string connected_ack = "CONNECTED_SUCCESS|" + device_name_ + "|" + local_ip_ + "\n";
+        (void)send_all(fd, connected_ack);
+    }
 
     const PeerInfo self{config::kMagic, device_name_, local_ip_, config::kTcpPort};
     const std::string hello = "HELLO|" + serialize_peer_info(self);
@@ -143,17 +256,20 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
     logger_.info("connection closed with " + peer.name + " @ " + peer.ip);
     mark_inactive(peer);
+    release_share_slot(peer);
     close_socket(fd);
 }
 
 void PeerNode::connect_to_peer(PeerInfo peer) {
     if (!running_ || is_active(peer)) {
+        clear_pending_connect(peer);
         return;
     }
 
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         logger_.info("failed to create TCP client socket");
+        clear_pending_connect(peer);
         return;
     }
 
@@ -163,14 +279,21 @@ void PeerNode::connect_to_peer(PeerInfo peer) {
     if (::inet_pton(AF_INET, peer.ip.c_str(), &addr.sin_addr) != 1) {
         logger_.info("invalid peer ip address: " + peer.ip);
         close_socket(fd);
+        clear_pending_connect(peer);
         return;
     }
 
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    logger_.info("trying TCP connect to " + peer.name + " @ " + peer.ip + ":" + std::to_string(peer.tcp_port));
+    std::string connect_error;
+    if (!connect_with_timeout(fd, addr, config::kConnectTimeout, connect_error)) {
+        logger_.info("tcp connect failed to " + peer.name + " @ " + peer.ip + ":" + std::to_string(peer.tcp_port) +
+                     " error=" + connect_error);
         close_socket(fd);
+        clear_pending_connect(peer);
         return;
     }
 
+    clear_pending_connect(peer);
     handle_peer_connection(fd, std::move(peer), "outbound");
 }
 
@@ -190,11 +313,17 @@ void PeerNode::broadcast_loop() {
     dest.sin_port = htons(config::kUdpDiscoveryPort);
     ::inet_pton(AF_INET, config::kBroadcastAddress, &dest.sin_addr);
 
+    sockaddr_in mcast{};
+    mcast.sin_family = AF_INET;
+    mcast.sin_port = htons(config::kUdpDiscoveryPort);
+    ::inet_pton(AF_INET, config::kMulticastAddress, &mcast.sin_addr);
+
     const PeerInfo self{config::kMagic, device_name_, local_ip_, config::kTcpPort};
     const std::string payload = serialize_peer_info(self);
 
     while (running_) {
         (void)::sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+        (void)::sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&mcast), sizeof(mcast));
         std::this_thread::sleep_for(config::kDiscoveryInterval);
     }
 
@@ -213,6 +342,10 @@ void PeerNode::udp_listener_loop() {
     int yes = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
+#ifdef SO_REUSEPORT
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+#endif
+
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(config::kUdpDiscoveryPort);
@@ -223,6 +356,11 @@ void PeerNode::udp_listener_loop() {
         close_socket(fd);
         return;
     }
+
+    ip_mreq mreq{};
+    mreq.imr_multiaddr.s_addr = ::inet_addr(config::kMulticastAddress);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    (void)::setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
     std::array<char, 1024> buffer{};
     while (running_) {
@@ -245,7 +383,8 @@ void PeerNode::udp_listener_loop() {
 
         logger_.info("discovered peer " + peer.name + " @ " + peer.ip + " (tcp port " + std::to_string(peer.tcp_port) + ")");
 
-        if (should_initiate(peer) && !is_active(peer)) {
+        if (should_initiate(peer) && !is_active(peer) && should_attempt_connect(peer)) {
+            logger_.info("scheduling TCP connect to " + peer.name + " @ " + peer.ip + ":" + std::to_string(peer.tcp_port));
             std::thread([this, peer] { connect_to_peer(peer); }).detach();
         }
     }
