@@ -730,7 +730,18 @@ int Application::run() {
 				             " tcp_connected_peers=" + std::to_string(connectedPeers.size()) +
 				             " discovery=active connected_peer_list=[" +
 				             joinStrings(connectedPeerLabels, ", ") + "]");
-				if (connectedPeers.empty() && knownDeviceCount == 0) {
+				
+				// Log detailed protocol information for each connected device
+				if (!connectedPeers.empty()) {
+					Logger::info("=== 2-Device Connection Summary ===");
+					for (const auto& peer : connectedPeers) {
+						Logger::info("  Device: name=" + peer.deviceName + " | id=" + peer.deviceId + 
+						           " | ip=" + peer.ip + " | port=" + std::to_string(peer.port) + 
+						           " | protocol=TLS/TCP | status=CONNECTED");
+					}
+					Logger::info("=== End Connection Summary ===");
+				}
+								if (connectedPeers.empty() && knownDeviceCount == 0) {
 					Logger::info("Termux/mobile note: if no peers appear, broadcast discovery may be blocked by the network");
 				}
 				nextConnectionStatusLog = now + std::chrono::seconds(5);
