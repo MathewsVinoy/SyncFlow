@@ -119,6 +119,7 @@ void PeerNode::mark_inactive(const PeerInfo& peer) {
 void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& direction) {
     mark_active(peer);
     logger_.info(direction + " connection established with " + peer.name + " @ " + peer.ip + ":" + std::to_string(peer.tcp_port));
+    logger_.info("connected successfully with " + peer.name + " @ " + peer.ip);
 
     const PeerInfo self{config::kMagic, device_name_, local_ip_, config::kTcpPort};
     const std::string hello = "HELLO|" + serialize_peer_info(self);

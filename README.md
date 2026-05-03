@@ -20,14 +20,31 @@ In Termux, install the build tools first, then build with CMake.
 
 Use CMake to build the `syncflow_peer` executable.
 
+Example:
+
+- `cmake -S . -B build`
+- `cmake --build build -j2`
+
 ## Run
 
-Start the program on both devices on the same network.
+Run the executable on both devices on the same network.
 
-Optional device name:
+Linux:
 
-- `./syncflow_peer laptop-a`
-- `./syncflow_peer tablet-b`
+- `./build/syncflow_peer`
+- or `./build/syncflow_peer laptop-a`
+
+Termux:
+
+- `./build/syncflow_peer`
+- or `./build/syncflow_peer android-1`
+
+Start it on the first device, then start it on the second device. Each device will:
+
+- broadcast itself over UDP
+- discover the other device
+- open a TCP connection
+- print connection logs with device name and IP
 
 If no name is provided, the hostname is used.
 
