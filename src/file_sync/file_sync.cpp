@@ -102,4 +102,8 @@ bool source_exists(const FileSyncConfig& config) {
     return !config.source_path.empty() && std::filesystem::exists(config.source_path);
 }
 
+bool source_is_directory(const FileSyncConfig& config) {
+    return source_exists(config) && std::filesystem::is_directory(config.source_path);
+}
+
 }  // namespace syncflow::file_sync

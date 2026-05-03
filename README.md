@@ -53,10 +53,12 @@ Start it on the first device, then start it on the second device. Each device wi
 Edit [config.json](config.json) to choose the file to send:
 
 - `enabled`: turn file sync on or off
-- `source_path`: file to send over the network
+- `source_path`: file or folder to send over the network
 - `receive_dir`: folder where incoming files are saved
 
-The repo includes [sample_sync.txt](sample_sync.txt) as a demo file.
+If `source_path` points to a folder, the whole directory tree is synced.
+
+The repo includes [sample_sync_dir](sample_sync_dir) as a demo folder tree.
 
 If no name is provided, the hostname is used.
 

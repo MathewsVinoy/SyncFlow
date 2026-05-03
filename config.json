@@ -1,7 +1,7 @@
 {
   "file_sync": {
     "enabled": true,
-    "source_path": "sample_sync.txt",
+    "source_path": "sync",
     "receive_dir": "received"
   }
 }
