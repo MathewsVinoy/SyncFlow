@@ -1,7 +1,6 @@
-
 # Syncflow peer demo
 
-This workspace now includes a simple two-device LAN demo.
+This workspace now includes a modular two-device LAN demo.
 
 Each device runs both:
 
@@ -10,6 +9,12 @@ Each device runs both:
 - a TCP client that connects to discovered peers
 
 The log shows the device name and IP for every discovery and connection event.
+
+## Android and Termux
+
+The networking code uses POSIX sockets and standard C++, so it works on Linux and on Android through Termux.
+
+In Termux, install the build tools first, then build with CMake.
 
 ## Build
 
@@ -30,4 +35,3 @@ If no name is provided, the hostname is used.
 
 - UDP discovery: 45454
 - TCP connection: 45455
-

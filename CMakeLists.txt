@@ -10,7 +10,23 @@ add_executable(syncflow_peer
     src/main.cpp
 )
 
-target_compile_options(syncflow_peer PRIVATE -Wall -Wextra -Wpedantic)
+add_library(syncflow_core
+    src/core/logger.cpp
+    src/platform/system_info.cpp
+    src/networking/peer_protocol.cpp
+    src/networking/peer_node.cpp
+)
+
+target_include_directories(syncflow_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_compile_options(syncflow_core PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(Threads REQUIRED)
-target_link_libraries(syncflow_peer PRIVATE Threads::Threads)
+target_link_libraries(syncflow_core PUBLIC Threads::Threads)
+
+target_link_libraries(syncflow_peer PRIVATE syncflow_core)
+
+target_include_directories(syncflow_peer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(syncflow_peer PRIVATE -Wall -Wextra -Wpedantic)
