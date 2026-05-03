@@ -16,6 +16,7 @@ add_library(syncflow_core
     src/platform/system_info.cpp
     src/networking/peer_protocol.cpp
     src/networking/peer_node.cpp
+    src/networking/file_transfer.cpp
 )
 
 target_include_directories(syncflow_core PUBLIC

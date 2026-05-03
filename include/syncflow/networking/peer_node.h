@@ -12,6 +12,7 @@
 #include "syncflow/file_sync/file_sync.h"
 #include "syncflow/logging.h"
 #include "syncflow/networking/peer_protocol.h"
+#include "syncflow/networking/file_transfer.h"
 
 namespace syncflow::networking {
 
