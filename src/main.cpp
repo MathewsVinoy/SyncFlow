@@ -1,21 +1,3 @@
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <netdb.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cstring>
-#include <ctime>
-#include <iomanip>
-#include <iostream>
-#include <mutex>
-#include <set>
 #include "syncflow/networking/peer_node.h"
 #include "syncflow/platform/system_info.h"
 
@@ -31,4 +13,3 @@ int main(int argc, char** argv) {
     node.run();
     return 0;
 }
-	g_running = false;
