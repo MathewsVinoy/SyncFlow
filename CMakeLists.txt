@@ -12,6 +12,7 @@ add_executable(syncflow_peer
 
 add_library(syncflow_core
     src/core/logger.cpp
+    src/file_sync/file_sync.cpp
     src/platform/system_info.cpp
     src/networking/peer_protocol.cpp
     src/networking/peer_node.cpp

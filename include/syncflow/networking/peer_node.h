@@ -2,12 +2,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <mutex>
 #include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
 
+#include "syncflow/file_sync/file_sync.h"
 #include "syncflow/logging.h"
 #include "syncflow/networking/peer_protocol.h"
 
@@ -31,6 +33,7 @@ private:
     std::set<std::string> active_connections_;
     std::set<std::string> pending_connections_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_connect_attempt_;
+    syncflow::file_sync::FileSyncConfig file_sync_config_;
     std::mutex active_mutex_;
     std::mutex connect_mutex_;
     std::mutex share_mutex_;
@@ -44,6 +47,10 @@ private:
     void tcp_server_loop();
     void connect_to_peer(PeerInfo peer);
     void handle_peer_connection(int fd, PeerInfo peer, const std::string& direction);
+    void maybe_sync_file(int fd, const PeerInfo& peer);
+    bool should_send_file_to_peer(const PeerInfo& peer) const;
+    bool send_file_payload(int fd, const std::filesystem::path& path, std::uint64_t& bytes_sent);
+    bool receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received);
     bool should_initiate(const PeerInfo& peer) const;
     bool is_active(const PeerInfo& peer);
     bool should_attempt_connect(const PeerInfo& peer);

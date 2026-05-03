@@ -7,6 +7,7 @@ Each device runs both:
 - a UDP discovery listener and broadcaster
 - a TCP server for inbound connections
 - a TCP client that connects to discovered peers
+- optional file sync from config.json
 
 The log shows the device name and IP for every discovery and connection event.
 
@@ -45,6 +46,17 @@ Start it on the first device, then start it on the second device. Each device wi
 - discover the other device
 - open a TCP connection
 - print connection logs with device name and IP
+- if enabled in config.json, send the configured file after the connection is established
+
+## File sync config
+
+Edit [config.json](config.json) to choose the file to send:
+
+- `enabled`: turn file sync on or off
+- `source_path`: file to send over the network
+- `receive_dir`: folder where incoming files are saved
+
+The repo includes [sample_sync.txt](sample_sync.txt) as a demo file.
 
 If no name is provided, the hostname is used.
 

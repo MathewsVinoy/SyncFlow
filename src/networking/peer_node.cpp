@@ -10,10 +10,16 @@
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cstdint>
+#include <sstream>
+#include <vector>
 
 #include <iostream>
 
@@ -28,9 +34,15 @@ void close_socket(int fd) {
     }
 }
 
+bool send_all(int fd, const void* data, std::size_t size);
+
 bool send_all(int fd, const std::string& data) {
-    const char* ptr = data.data();
-    std::size_t remaining = data.size();
+    return send_all(fd, data.data(), data.size());
+}
+
+bool send_all(int fd, const void* data, std::size_t size) {
+    const auto* ptr = static_cast<const char*>(data);
+    std::size_t remaining = size;
 
     while (remaining > 0) {
         const ssize_t sent = ::send(fd, ptr, remaining, 0);
@@ -42,6 +54,48 @@ bool send_all(int fd, const std::string& data) {
     }
 
     return true;
+}
+
+bool recv_exact(int fd, void* data, std::size_t size) {
+    auto* ptr = static_cast<char*>(data);
+    std::size_t remaining = size;
+
+    while (remaining > 0) {
+        const ssize_t received = ::recv(fd, ptr, remaining, 0);
+        if (received <= 0) {
+            return false;
+        }
+        ptr += received;
+        remaining -= static_cast<std::size_t>(received);
+    }
+
+    return true;
+}
+
+bool recv_line(int fd, std::string& line) {
+    line.clear();
+    char ch = '\0';
+    while (true) {
+        const ssize_t received = ::recv(fd, &ch, 1, 0);
+        if (received <= 0) {
+            return false;
+        }
+        if (ch == '\n') {
+            return true;
+        }
+        if (ch != '\r') {
+            line.push_back(ch);
+        }
+    }
+}
+
+
+std::string basename_for_path(const std::filesystem::path& path) {
+    return path.filename().string();
+}
+
+std::string sanitize_filename(const std::string& filename) {
+    return std::filesystem::path(filename).filename().string();
 }
 
 bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds timeout, std::string& error_text) {
@@ -104,9 +158,10 @@ bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds 
 }  // namespace
 
 PeerNode::PeerNode(std::string device_name)
-    : device_name_(std::move(device_name)),
-      local_ip_(platform::get_local_ipv4()),
-      logger_(device_name_, local_ip_) {}
+        : device_name_(std::move(device_name)),
+            local_ip_(platform::get_local_ipv4()),
+            logger_(device_name_, local_ip_),
+            file_sync_config_(syncflow::file_sync::load_config("config.json")) {}
 
 void PeerNode::run() {
     platform::install_signal_handlers(running_);
@@ -147,6 +202,13 @@ void PeerNode::log_startup() {
     logger_.info("device name: " + device_name_ + ", ip: " + local_ip_ +
                  ", tcp port: " + std::to_string(config::kTcpPort) +
                  ", udp port: " + std::to_string(config::kUdpDiscoveryPort));
+
+    if (syncflow::file_sync::is_enabled(file_sync_config_)) {
+        logger_.info("file sync enabled, source: " + file_sync_config_.source_path.string() +
+                     ", receive dir: " + file_sync_config_.receive_dir.string());
+    } else {
+        logger_.info("file sync disabled or config.json missing source_path");
+    }
 }
 
 bool PeerNode::should_initiate(const PeerInfo& peer) const {
@@ -195,6 +257,94 @@ void PeerNode::mark_inactive(const PeerInfo& peer) {
     active_connections_.erase(endpoint_key(peer));
 }
 
+bool PeerNode::should_send_file_to_peer(const PeerInfo& peer) const {
+    if (!syncflow::file_sync::is_enabled(file_sync_config_) || !syncflow::file_sync::source_exists(file_sync_config_)) {
+        return false;
+    }
+
+    if (device_name_ != peer.name) {
+        return device_name_ < peer.name;
+    }
+
+    return local_ip_ < peer.ip;
+}
+
+bool PeerNode::send_file_payload(int fd, const std::filesystem::path& path, std::uint64_t& bytes_sent) {
+    bytes_sent = 0;
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        logger_.info("failed to open file for sync: " + path.string());
+        return false;
+    }
+
+    const std::uint64_t total_size = static_cast<std::uint64_t>(std::filesystem::file_size(path));
+    const std::string filename = basename_for_path(path);
+
+    std::ostringstream begin;
+    begin << "FILE_BEGIN|" << filename << '|' << total_size << '\n';
+    if (!send_all(fd, begin.str())) {
+        return false;
+    }
+
+    std::vector<char> buffer(4096);
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize got = input.gcount();
+        if (got > 0) {
+            if (!send_all(fd, buffer.data(), static_cast<std::size_t>(got))) {
+                return false;
+            }
+            bytes_sent += static_cast<std::uint64_t>(got);
+        }
+    }
+
+    std::ostringstream end;
+    end << "FILE_DONE|" << filename << '|' << bytes_sent << '\n';
+    return send_all(fd, end.str());
+}
+
+bool PeerNode::receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received) {
+    bytes_received = 0;
+
+    std::filesystem::create_directories(output_path.parent_path());
+
+    std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        logger_.info("failed to create output file: " + output_path.string());
+        return false;
+    }
+
+    std::vector<char> buffer(4096);
+    while (bytes_received < expected_size) {
+        const std::uint64_t remaining = expected_size - bytes_received;
+        const std::size_t chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
+        if (!recv_exact(fd, buffer.data(), chunk)) {
+            return false;
+        }
+        output.write(buffer.data(), static_cast<std::streamsize>(chunk));
+        if (!output) {
+            return false;
+        }
+        bytes_received += static_cast<std::uint64_t>(chunk);
+    }
+
+    return true;
+}
+
+void PeerNode::maybe_sync_file(int fd, const PeerInfo& peer) {
+    if (!should_send_file_to_peer(peer)) {
+        return;
+    }
+
+    std::uint64_t bytes_sent = 0;
+    if (send_file_payload(fd, file_sync_config_.source_path, bytes_sent)) {
+        logger_.info("file sent successfully to " + peer.name + " @ " + peer.ip + " bytes=" + std::to_string(bytes_sent));
+    } else {
+        logger_.info("file send failed to " + peer.name + " @ " + peer.ip);
+    }
+}
+
 bool PeerNode::try_acquire_share_slot(const PeerInfo& peer) {
     const auto key = endpoint_key(peer);
     std::lock_guard<std::mutex> guard(share_mutex_);
@@ -238,20 +388,73 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
     const std::string hello = "HELLO|" + serialize_peer_info(self);
     (void)send_all(fd, hello);
 
-    std::array<char, 1024> buffer{};
+    maybe_sync_file(fd, peer);
+
     while (running_) {
-        const ssize_t received = ::recv(fd, buffer.data(), buffer.size() - 1, 0);
-        if (received <= 0) {
+        std::string line;
+        if (!recv_line(fd, line)) {
             break;
         }
 
-        buffer[static_cast<std::size_t>(received)] = '\0';
-        std::string text = buffer.data();
-        text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
-        text.erase(std::remove(text.begin(), text.end(), '\n'), text.end());
-        if (!text.empty()) {
-            logger_.info("message from " + peer.name + " @ " + peer.ip + ": " + text);
+        if (line.empty()) {
+            continue;
         }
+
+        if (line.rfind("FILE_BEGIN|", 0) == 0) {
+            const std::size_t first_sep = line.find('|');
+            const std::size_t second_sep = line.find('|', first_sep + 1);
+            if (first_sep == std::string::npos || second_sep == std::string::npos) {
+                continue;
+            }
+
+            const std::string filename = sanitize_filename(line.substr(first_sep + 1, second_sep - first_sep - 1));
+            std::uint64_t expected_size = 0;
+            try {
+                expected_size = static_cast<std::uint64_t>(std::stoull(line.substr(second_sep + 1)));
+            } catch (...) {
+                logger_.info("invalid file size received from " + peer.name + " @ " + peer.ip);
+                continue;
+            }
+            const std::filesystem::path output_path = file_sync_config_.receive_dir / filename;
+
+            std::uint64_t received_bytes = 0;
+            if (receive_file_payload(fd, output_path, expected_size, received_bytes)) {
+                logger_.info("file received successfully from " + peer.name + " @ " + peer.ip +
+                             " saved=" + output_path.string() + " bytes=" + std::to_string(received_bytes));
+                const std::string ack = "FILE_RECEIVED|" + filename + "|" + std::to_string(received_bytes) + "\n";
+                (void)send_all(fd, ack);
+            } else {
+                logger_.info("file receive failed from " + peer.name + " @ " + peer.ip);
+            }
+            continue;
+        }
+
+        if (line.rfind("FILE_DONE|", 0) == 0) {
+            logger_.info("file transfer completed with " + peer.name + " @ " + peer.ip);
+            continue;
+        }
+
+        if (line.rfind("CONNECTED_SUCCESS|", 0) == 0) {
+            logger_.info("peer confirmed connected successfully: " + line);
+            continue;
+        }
+
+        if (line.rfind("SHARE_BUSY|", 0) == 0) {
+            logger_.info("peer reported share busy: " + line);
+            continue;
+        }
+
+        if (line.rfind("FILE_RECEIVED|", 0) == 0) {
+            logger_.info("peer acknowledged file receipt: " + line);
+            continue;
+        }
+
+        if (line.rfind("HELLO|", 0) == 0) {
+            logger_.info("hello from " + peer.name + " @ " + peer.ip + " payload=" + line);
+            continue;
+        }
+
+        logger_.info("message from " + peer.name + " @ " + peer.ip + ": " + line);
     }
 
     logger_.info("connection closed with " + peer.name + " @ " + peer.ip);
