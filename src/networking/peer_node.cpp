@@ -308,16 +308,8 @@ void PeerNode::mark_inactive(const PeerInfo& peer) {
     active_connections_.erase(endpoint_key(peer));
 }
 
-bool PeerNode::should_send_file_to_peer(const PeerInfo& peer) const {
-    if (!syncflow::file_sync::is_enabled(file_sync_config_) || !syncflow::file_sync::source_exists(file_sync_config_)) {
-        return false;
-    }
-
-    if (device_name_ != peer.name) {
-        return device_name_ < peer.name;
-    }
-
-    return local_ip_ < peer.ip;
+bool PeerNode::should_send_file_to_peer(const PeerInfo&) const {
+    return syncflow::file_sync::is_enabled(file_sync_config_) && syncflow::file_sync::source_exists(file_sync_config_);
 }
 
 bool PeerNode::send_file_payload(int fd, const std::filesystem::path& path, std::uint64_t& bytes_sent) {

@@ -56,6 +56,8 @@ Edit [config.json](config.json) to choose the file to send:
 - `source_path`: file or folder to send over the network
 - `receive_dir`: folder where incoming files are saved
 
+Enable file sync only on the device that should send the folder tree.
+
 If `source_path` points to a folder, the whole directory tree is synced.
 
 The default config uses [sample_sync_dir](sample_sync_dir) as a demo folder tree.
