@@ -375,8 +375,9 @@ bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds 
 
 }  // namespace
 
-PeerNode::PeerNode(std::string device_name)
-        : file_sync_config_(syncflow::file_sync::load_config(find_config_path())),
+PeerNode::PeerNode(std::string device_name, std::filesystem::path config_path)
+                : config_path_(config_path.empty() ? find_config_path() : std::move(config_path)),
+                    file_sync_config_(syncflow::file_sync::load_config(config_path_)),
           device_name_([&]() -> std::string {
               if (!device_name.empty()) {
                   return device_name;
@@ -412,6 +413,11 @@ void PeerNode::run() {
 }
 
 void PeerNode::stop() {
+    if (stopped_.exchange(true)) {
+        return;
+    }
+
+    running_.store(false);
     close_socket(tcp_server_fd_.exchange(-1));
     close_socket(udp_listener_fd_.exchange(-1));
 
@@ -426,6 +432,48 @@ void PeerNode::stop() {
     }
 
     logger_.info("shutdown complete");
+}
+
+std::string PeerNode::status_summary() const {
+    auto escape = [](const std::string& value) {
+        std::string out;
+        out.reserve(value.size() + 8);
+        for (char c : value) {
+            switch (c) {
+                case '\\': out += "\\\\"; break;
+                case '"': out += "\\\""; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default: out.push_back(c); break;
+            }
+        }
+        return out;
+    };
+
+    std::vector<std::string> connections;
+    {
+        std::lock_guard<std::mutex> guard(active_mutex_);
+        connections.assign(active_connections_.begin(), active_connections_.end());
+    }
+
+    std::ostringstream oss;
+    oss << "{\n"
+        << "  \"running\": " << (running_.load() ? "true" : "false") << ",\n"
+        << "  \"device_name\": \"" << escape(device_name_) << "\",\n"
+        << "  \"local_ip\": \"" << escape(local_ip_) << "\",\n"
+        << "  \"config_path\": \"" << escape(config_path_.string()) << "\",\n"
+        << "  \"connections\": [";
+
+    for (std::size_t i = 0; i < connections.size(); ++i) {
+        if (i > 0) {
+            oss << ", ";
+        }
+        oss << "\"" << escape(connections[i]) << "\"";
+    }
+
+    oss << "]\n}";
+    return oss.str();
 }
 
 void PeerNode::log_startup() {

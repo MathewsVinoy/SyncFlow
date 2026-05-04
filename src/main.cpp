@@ -218,6 +218,8 @@ int main(int argc, char** argv) {
         device_name = ""; // let PeerNode resolve from config or macro or hostname
     }
 
+    const auto config_path = config_override.empty() ? find_config_path() : config_override;
+
     // Daemonize if requested
     if (detach) {
         const auto log_dir = config_override.empty() 
@@ -229,7 +231,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    syncflow::networking::PeerNode node(device_name);
+    syncflow::networking::PeerNode node(device_name, config_path);
     node.run();
     return 0;
 }

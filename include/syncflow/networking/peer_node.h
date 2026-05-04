@@ -18,15 +18,19 @@ namespace syncflow::networking {
 
 class PeerNode {
 public:
-    explicit PeerNode(std::string device_name);
+    explicit PeerNode(std::string device_name, std::filesystem::path config_path = {});
     void run();
+    void stop();
+    std::string status_summary() const;
 
 private:
     syncflow::file_sync::FileSyncConfig file_sync_config_;
+    std::filesystem::path config_path_;
     std::string device_name_;
     std::string local_ip_;
     syncflow::Logger logger_;
     std::atomic_bool running_{true};
+    std::atomic_bool stopped_{false};
     std::atomic<int> tcp_server_fd_{-1};
     std::atomic<int> udp_listener_fd_{-1};
     std::thread tcp_thread_;
@@ -40,8 +44,6 @@ private:
     std::mutex share_mutex_;
     bool share_in_progress_{false};
     std::string share_peer_key_;
-
-    void stop();
     void log_startup();
     void broadcast_loop();
     void udp_listener_loop();
