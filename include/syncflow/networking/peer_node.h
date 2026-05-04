@@ -52,7 +52,7 @@ private:
     bool should_send_file_to_peer(const PeerInfo& peer) const;
     bool send_file_payload(int fd, const std::filesystem::path& path, std::uint64_t& bytes_sent);
     bool send_directory_payload(int fd, const std::filesystem::path& root_path, std::uint64_t& bytes_sent);
-    bool receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received);
+    bool receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received, bool write_output = true);
     bool should_initiate(const PeerInfo& peer) const;
     bool is_active(const PeerInfo& peer);
     bool should_attempt_connect(const PeerInfo& peer);

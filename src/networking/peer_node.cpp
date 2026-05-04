@@ -113,6 +113,55 @@ bool recv_line(int fd, std::string& line) {
 }
 
 
+
+std::filesystem::path hidden_sync_folder(const std::filesystem::path& base_path) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(base_path, ec) && !ec) {
+        return base_path / ".syncflow";
+    }
+
+    const auto parent = base_path.has_parent_path() ? base_path.parent_path() : std::filesystem::current_path();
+    return parent / ".syncflow";
+}
+
+std::filesystem::path hidden_sync_log_path(const std::filesystem::path& base_path) {
+    return hidden_sync_folder(base_path) / "transfer.log";
+}
+
+std::chrono::system_clock::time_point file_time_to_system_time(const std::filesystem::file_time_type& file_time) {
+    return std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        file_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+}
+
+std::filesystem::file_time_type system_time_to_file_time(const std::chrono::system_clock::time_point& system_time) {
+    return std::chrono::time_point_cast<std::filesystem::file_time_type::duration>(
+        system_time - std::chrono::system_clock::now() + std::filesystem::file_time_type::clock::now());
+}
+
+std::chrono::system_clock::time_point unix_ms_to_system_time(std::int64_t unix_ms) {
+    return std::chrono::system_clock::time_point{std::chrono::milliseconds{unix_ms}};
+}
+
+std::int64_t system_time_to_unix_ms(const std::chrono::system_clock::time_point& tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
+}
+
+void append_transfer_log(const std::filesystem::path& base_path, const std::string& message) {
+    std::error_code ec;
+    const auto log_dir = hidden_sync_folder(base_path);
+    std::filesystem::create_directories(log_dir, ec);
+    if (ec) {
+        return;
+    }
+
+    std::ofstream log(hidden_sync_log_path(base_path), std::ios::app);
+    if (!log) {
+        return;
+    }
+
+    log << system_time_to_unix_ms(std::chrono::system_clock::now()) << '|' << message << '\n';
+}
+
 std::string basename_for_path(const std::filesystem::path& path) {
     return path.filename().string();
 }
@@ -315,9 +364,13 @@ bool PeerNode::should_send_file_to_peer(const PeerInfo&) const {
 bool PeerNode::send_file_payload(int fd, const std::filesystem::path& path, std::uint64_t& bytes_sent) {
     const std::uint64_t total_size = static_cast<std::uint64_t>(std::filesystem::file_size(path));
     const std::string filename = basename_for_path(path);
+    std::error_code mtime_ec;
+    const auto sender_time = std::filesystem::last_write_time(path, mtime_ec);
+    const auto sender_mtime = mtime_ec ? std::chrono::system_clock::now() : file_time_to_system_time(sender_time);
+    const std::int64_t sender_mtime_ms = system_time_to_unix_ms(sender_mtime);
 
     std::ostringstream begin;
-    begin << "SYNC_BEGIN|" << filename << "|FILE|" << total_size << '\n';
+    begin << "SYNC_BEGIN|" << filename << "|FILE|" << total_size << '|' << sender_mtime_ms << '\n';
     if (!send_all(fd, begin.str())) {
         return false;
     }
@@ -328,6 +381,10 @@ bool PeerNode::send_file_payload(int fd, const std::filesystem::path& path, std:
 
     std::ostringstream end;
     end << "SYNC_END|" << filename << "|FILE\n";
+    append_transfer_log(path.has_parent_path() ? path.parent_path() : std::filesystem::current_path(),
+                        "sent file " + path.string() +
+                        " bytes=" + std::to_string(bytes_sent) +
+                        " mtime_ms=" + std::to_string(sender_mtime_ms));
     return send_all(fd, end.str());
 }
 
@@ -344,6 +401,16 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
     std::uint32_t total_files = 0;
     std::uint64_t total_size = 0;
     for (std::filesystem::recursive_directory_iterator it(root_path, scan_options), end; it != end; ++it) {
+        const auto relative = std::filesystem::relative(it->path(), root_path);
+        const std::string relative_text = relative.generic_string();
+
+        if (relative_text.rfind(".syncflow", 0) == 0) {
+            if (it->is_directory()) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+
         if (it->is_regular_file()) {
             ++total_files;
             total_size += static_cast<std::uint64_t>(std::filesystem::file_size(it->path()));
@@ -366,13 +433,25 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
         const auto relative = std::filesystem::relative(entry.path(), root_path);
         const std::string relative_text = relative.generic_string();
 
+        if (relative_text.rfind(".syncflow", 0) == 0) {
+            if (entry.is_directory()) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+
         if (!entry.is_regular_file()) {
             continue;
         }
 
         const std::uint64_t file_size = static_cast<std::uint64_t>(std::filesystem::file_size(entry.path()));
+        std::error_code mtime_ec;
+        const auto sender_time = std::filesystem::last_write_time(entry.path(), mtime_ec);
+        const auto sender_mtime = mtime_ec ? std::chrono::system_clock::now() : file_time_to_system_time(sender_time);
+        const std::int64_t sender_mtime_ms = system_time_to_unix_ms(sender_mtime);
+
         std::ostringstream file_begin;
-        file_begin << "FILE_ENTRY|" << relative_text << '|' << file_size << '\n';
+        file_begin << "FILE_ENTRY|" << relative_text << '|' << file_size << '|' << sender_mtime_ms << '\n';
         if (!send_all(fd, file_begin.str())) {
             return false;
         }
@@ -386,7 +465,12 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
 
         logger_.info("sent file " + std::to_string(sent_files) + "/" + std::to_string(total_files) +
                      ": " + relative_text + " bytes=" + std::to_string(file_bytes) +
+                     " mtime_ms=" + std::to_string(sender_mtime_ms) +
                      " total_sent=" + std::to_string(bytes_sent));
+        append_transfer_log(root_path, "sent file " + relative_text +
+                                       " bytes=" + std::to_string(file_bytes) +
+                                       " mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                       " progress=" + std::to_string(sent_files) + "/" + std::to_string(total_files));
 
         std::ostringstream file_done;
         file_done << "FILE_DONE|" << relative_text << '|' << file_bytes << '\n';
@@ -400,23 +484,32 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
     logger_.info("directory sync complete: source=" + root_path.string() +
                  " files_sent=" + std::to_string(sent_files) +
                  " bytes_sent=" + std::to_string(bytes_sent));
+    append_transfer_log(root_path, "directory sync complete files_sent=" + std::to_string(sent_files) +
+                                   " bytes_sent=" + std::to_string(bytes_sent));
     return send_all(fd, end.str());
 }
 
-bool PeerNode::receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received) {
+bool PeerNode::receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received, bool write_output) {
     bytes_received = 0;
 
-    std::error_code ec;
-    std::filesystem::create_directories(output_path.parent_path(), ec);
-    if (ec) {
-        logger_.info("failed to create parent directories: " + output_path.parent_path().string() + " error=" + ec.message());
-        return false;
-    }
+    std::ofstream output;
+    if (write_output) {
+        if (!output_path.has_parent_path()) {
+            return false;
+        }
 
-    std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
-    if (!output) {
-        logger_.info("failed to create output file: " + output_path.string());
-        return false;
+        std::error_code ec;
+        std::filesystem::create_directories(output_path.parent_path(), ec);
+        if (ec) {
+            logger_.info("failed to create parent directories: " + output_path.parent_path().string() + " error=" + ec.message());
+            return false;
+        }
+
+        output.open(output_path, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            logger_.info("failed to create output file: " + output_path.string());
+            return false;
+        }
     }
 
     std::vector<char> buffer(4096);
@@ -426,9 +519,11 @@ bool PeerNode::receive_file_payload(int fd, const std::filesystem::path& output_
         if (!recv_exact(fd, buffer.data(), chunk)) {
             return false;
         }
-        output.write(buffer.data(), static_cast<std::streamsize>(chunk));
-        if (!output) {
-            return false;
+        if (write_output) {
+            output.write(buffer.data(), static_cast<std::streamsize>(chunk));
+            if (!output) {
+                return false;
+            }
         }
         bytes_received += static_cast<std::uint64_t>(chunk);
     }
@@ -528,8 +623,13 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
             const std::string kind = line.substr(second_sep + 1, third_sep - second_sep - 1);
             if (kind == "FILE") {
                 std::uint64_t expected_size = 0;
+                std::int64_t sender_mtime_ms = 0;
                 try {
                     expected_size = static_cast<std::uint64_t>(std::stoull(line.substr(third_sep + 1)));
+                    const std::size_t fourth_sep = line.find('|', third_sep + 1);
+                    if (fourth_sep != std::string::npos) {
+                        sender_mtime_ms = static_cast<std::int64_t>(std::stoll(line.substr(fourth_sep + 1)));
+                    }
                 } catch (...) {
                     logger_.info("invalid file size received from " + peer.name + " @ " + peer.ip);
                     continue;
@@ -537,9 +637,51 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
                 const std::filesystem::path output_path = file_sync_config_.receive_dir / name;
                 std::uint64_t received_bytes = 0;
-                if (receive_file_payload(fd, output_path, expected_size, received_bytes)) {
-                    logger_.info("file received successfully from " + peer.name + " @ " + peer.ip +
-                                 " saved=" + output_path.string() + " bytes=" + std::to_string(received_bytes));
+                const auto sender_mtime = unix_ms_to_system_time(sender_mtime_ms);
+                bool should_write = true;
+                std::int64_t local_mtime_ms = 0;
+
+                std::error_code exists_ec;
+                if (std::filesystem::exists(output_path, exists_ec) && !exists_ec) {
+                    std::error_code local_mtime_ec;
+                    const auto local_file_time = std::filesystem::last_write_time(output_path, local_mtime_ec);
+                    if (!local_mtime_ec) {
+                        const auto local_mtime = file_time_to_system_time(local_file_time);
+                        local_mtime_ms = system_time_to_unix_ms(local_mtime);
+                        should_write = local_mtime < sender_mtime;
+                    }
+                }
+
+                if (receive_file_payload(fd, output_path, expected_size, received_bytes, should_write)) {
+                    if (should_write) {
+                        const auto sender_file_time = system_time_to_file_time(sender_mtime);
+                        std::error_code write_time_ec;
+                        std::filesystem::last_write_time(output_path, sender_file_time, write_time_ec);
+                        if (write_time_ec) {
+                            logger_.info("failed to update mtime for " + output_path.string() + " error=" + write_time_ec.message());
+                        }
+
+                        logger_.info("file received successfully from " + peer.name + " @ " + peer.ip +
+                                     " saved=" + output_path.string() +
+                                     " bytes=" + std::to_string(received_bytes) +
+                                     " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                     " local_mtime_ms=" + std::to_string(local_mtime_ms) +
+                                     " action=updated");
+                        append_transfer_log(file_sync_config_.receive_dir, "updated " + output_path.string() +
+                                                           " bytes=" + std::to_string(received_bytes) +
+                                                           " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                                           " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                    } else {
+                        logger_.info("file received but skipped newer local copy from " + peer.name + " @ " + peer.ip +
+                                     " path=" + output_path.string() +
+                                     " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                     " local_mtime_ms=" + std::to_string(local_mtime_ms) +
+                                     " action=skipped_newer_local");
+                        append_transfer_log(file_sync_config_.receive_dir, "skipped " + output_path.string() +
+                                                           " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                                           " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                    }
+
                     const std::string ack = "FILE_RECEIVED|" + name + "|" + std::to_string(received_bytes) + "\n";
                     (void)send_all(fd, ack);
                 } else {
@@ -606,8 +748,13 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
             const std::string relative_path = line.substr(first_sep + 1, second_sep - first_sep - 1);
             std::uint64_t expected_size = 0;
+            std::int64_t sender_mtime_ms = 0;
             try {
                 expected_size = static_cast<std::uint64_t>(std::stoull(line.substr(second_sep + 1)));
+                const std::size_t third_sep = line.find('|', second_sep + 1);
+                if (third_sep != std::string::npos) {
+                    sender_mtime_ms = static_cast<std::int64_t>(std::stoll(line.substr(third_sep + 1)));
+                }
             } catch (...) {
                 logger_.info("invalid directory file size received from " + peer.name + " @ " + peer.ip);
                 continue;
@@ -615,15 +762,56 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
             const std::filesystem::path output_path = current_sync_base / std::filesystem::path(relative_path);
             std::uint64_t received_bytes = 0;
-            if (receive_file_payload(fd, output_path, expected_size, received_bytes)) {
+            const auto sender_mtime = unix_ms_to_system_time(sender_mtime_ms);
+            bool should_write = true;
+            std::int64_t local_mtime_ms = 0;
+
+            std::error_code exists_ec;
+            if (std::filesystem::exists(output_path, exists_ec) && !exists_ec) {
+                std::error_code local_mtime_ec;
+                const auto local_file_time = std::filesystem::last_write_time(output_path, local_mtime_ec);
+                if (!local_mtime_ec) {
+                    const auto local_mtime = file_time_to_system_time(local_file_time);
+                    local_mtime_ms = system_time_to_unix_ms(local_mtime);
+                    should_write = local_mtime < sender_mtime;
+                }
+            }
+
+            if (receive_file_payload(fd, output_path, expected_size, received_bytes, should_write)) {
                 ++current_sync_received_files;
                 current_sync_received_bytes += received_bytes;
-                logger_.info("received file " + std::to_string(current_sync_received_files) +
-                             "/" + std::to_string(current_sync_total_files) +
-                             ": " + output_path.string() +
-                             " bytes=" + std::to_string(received_bytes) +
-                             " total_received=" + std::to_string(current_sync_received_bytes) +
-                             "/" + std::to_string(current_sync_total_bytes));
+                if (should_write) {
+                    const auto sender_file_time = system_time_to_file_time(sender_mtime);
+                    std::error_code write_time_ec;
+                    std::filesystem::last_write_time(output_path, sender_file_time, write_time_ec);
+                    if (write_time_ec) {
+                        logger_.info("failed to update mtime for " + output_path.string() + " error=" + write_time_ec.message());
+                    }
+
+                    logger_.info("received file " + std::to_string(current_sync_received_files) +
+                                 "/" + std::to_string(current_sync_total_files) +
+                                 ": " + output_path.string() +
+                                 " bytes=" + std::to_string(received_bytes) +
+                                 " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                 " local_mtime_ms=" + std::to_string(local_mtime_ms) +
+                                 " action=updated");
+                    append_transfer_log(file_sync_config_.receive_dir, "updated " + output_path.string() +
+                                                       " bytes=" + std::to_string(received_bytes) +
+                                                       " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                                       " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                } else {
+                    logger_.info("received file " + std::to_string(current_sync_received_files) +
+                                 "/" + std::to_string(current_sync_total_files) +
+                                 ": " + output_path.string() +
+                                 " bytes=" + std::to_string(received_bytes) +
+                                 " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                 " local_mtime_ms=" + std::to_string(local_mtime_ms) +
+                                 " action=skipped_newer_local");
+                    append_transfer_log(file_sync_config_.receive_dir, "skipped " + output_path.string() +
+                                                       " bytes=" + std::to_string(received_bytes) +
+                                                       " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
+                                                       " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                }
                 const std::string ack = "FILE_RECEIVED|" + relative_path + "|" + std::to_string(received_bytes) + "\n";
                 (void)send_all(fd, ack);
             } else {
