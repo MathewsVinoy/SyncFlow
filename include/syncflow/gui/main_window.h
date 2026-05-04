@@ -12,7 +12,7 @@ namespace syncflow::gui {
 
 class SyncWorker;
 
-class SyncflowMainWindow : public QMainWindow {
+class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
@@ -23,12 +23,12 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void onDeviceDiscovered(const QString& device_name, const QString& device_ip);
+    void onDeviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint);
     void onDeviceConnected(const QString& device_name);
     void onDeviceDisconnected(const QString& device_name);
-    void onSyncStarted(const QString& device_name);
-    void onSyncProgress(const QString& file_name, int progress);
-    void onSyncCompleted(const QString& device_name);
+    void onSyncStarted();
+    void onSyncProgress(int progress);
+    void onSyncCompleted();
     void onSyncError(const QString& error_message);
     void onSettingsClicked();
     void onApproveClicked();

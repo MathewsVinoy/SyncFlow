@@ -186,10 +186,11 @@ void MainWindow::connectSignals() {
             this, &MainWindow::onRefreshClicked);
 }
 
-void MainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip) {
+void MainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint) {
     QListWidgetItem* item = new QListWidgetItem(
         QString("%1 (%2)").arg(device_name, device_ip), device_list_widget_);
     item->setData(Qt::UserRole, device_name);
+    item->setData(Qt::UserRole + 1, fingerprint);
     device_list_widget_->addItem(item);
 }
 

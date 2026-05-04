@@ -12,11 +12,10 @@
 namespace syncflow::gui {
 
 DeviceApprovalDialog::DeviceApprovalDialog(const QString& device_name,
-                                          const QString& device_ip,
-                                          const QString& fingerprint,
-                                          QWidget* parent)
-    : QDialog(parent), device_name_(device_name), device_ip_(device_ip),
-      fingerprint_(fingerprint) {
+                                                                                    const QString& device_ip,
+                                                                                    const QString& fingerprint,
+                                                                                    QWidget* parent)
+        : QDialog(parent), device_name_(device_name), fingerprint_(fingerprint), device_ip_(device_ip), approved_(false) {
     
     setWindowTitle("Device Approval");
     setMinimumWidth(600);
@@ -127,12 +126,14 @@ void DeviceApprovalDialog::onCopyFingerprintClicked() {
 }
 
 void DeviceApprovalDialog::onApproveClicked() {
-    setResult(Approved);
+    approved_ = true;
+    setResult(QDialog::Accepted);
     accept();
 }
 
 void DeviceApprovalDialog::onDenyClicked() {
-    setResult(Denied);
+    approved_ = false;
+    setResult(QDialog::Rejected);
     reject();
 }
 

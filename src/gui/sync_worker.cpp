@@ -1,4 +1,5 @@
 #include "syncflow/gui/sync_worker.h"
+#include "syncflow/networking/peer_node.h"
 
 #include <thread>
 #include <chrono>

@@ -15,7 +15,7 @@ class SyncWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit SyncWorker();
+    explicit SyncWorker(QObject* parent = nullptr);
     ~SyncWorker() override;
 
 public slots:
@@ -28,7 +28,7 @@ public slots:
     void setSecurityEnabled(bool enabled);
 
 signals:
-    void deviceDiscovered(const QString& device_name, const QString& device_ip);
+    void deviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint);
     void deviceConnected(const QString& device_name);
     void deviceDisconnected(const QString& device_name);
     void syncStarted();
