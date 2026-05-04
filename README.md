@@ -1,6 +1,6 @@
 # Syncflow peer demo
 
-This workspace now includes a modular two-device LAN demo.
+This workspace includes a modular peer-to-peer file sync system with **cross-platform support** (Linux, macOS, Windows).
 
 Each device runs both:
 
@@ -8,8 +8,17 @@ Each device runs both:
 - a TCP server for inbound connections
 - a TCP client that connects to discovered peers
 - optional file sync from config.json
+- device authentication using certificates
+- trusted device management
 
 The log shows the device name and IP for every discovery and connection event.
+
+## Supported Platforms
+
+- **Linux** (Ubuntu, Debian, Fedora, etc.)
+- **macOS** (Intel and Apple Silicon)
+- **Windows** (10, 11)
+- **Android/Termux**
 
 ## Android and Termux
 
@@ -21,33 +30,140 @@ In Termux, install the build tools first, then build with CMake.
 
 Use CMake to build the `syncflow_peer` executable.
 
-Example:
+### Prerequisites
 
-- `cmake -S . -B build`
-- `cmake --build build -j2`
+**Linux/macOS:**
+```bash
+sudo apt-get install build-essential cmake libssl-dev  # Ubuntu/Debian
+brew install cmake openssl                             # macOS
+```
 
-You can optionally set a device name at build time:
+**Windows:**
+- Install [Visual Studio 2019+](https://visualstudio.microsoft.com/downloads/) with C++ tools
+- Install [CMake](https://cmake.org/download/) (3.16+)
+- OpenSSL is automatically found/linked
 
-- `cmake -DDEVICE_NAME=my-device -S . -B build` — embed device name into the binary
-- `cmake --build build -j2`
+**macOS (Homebrew):**
+```bash
+brew install cmake openssl
+```
+
+### Build Steps
+
+**Linux/macOS:**
+```bash
+cmake -S . -B build
+cmake --build build -j4
+```
+
+**Windows (Command Prompt):**
+```cmd
+cmake -S . -B build -G "Visual Studio 17 2022"
+cmake --build build -j4 --config Release
+```
+
+**Windows (PowerShell):**
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022"
+cmake --build build -j4 --config Release
+```
+
+**Termux (Android):**
+```bash
+pkg install cmake openssl-dev clang
+cmake -S . -B build
+cmake --build build -j4
+```
+
+### Build with Custom Device Name
+
+```bash
+cmake -DDEVICE_NAME="my-laptop" -S . -B build
+cmake --build build -j4
+```
+
+On Windows with custom device name:
+```cmd
+cmake -DDEVICE_NAME="my-windows-pc" -S . -B build -G "Visual Studio 17 2022"
+cmake --build build -j4 --config Release
+```
 
 ## Run
 
-Run the executable on both devices on the same network.
+Run the executable on all devices on the same network.
 
-### Basic usage
+### Linux/macOS
 
-Linux:
+```bash
+# Basic usage
+./build/syncflow_peer
 
-- `./build/syncflow_peer` — start with hostname or config.json device_name
-- `./build/syncflow_peer --device laptop-a` — override device name via CLI
+# With custom device name
+./build/syncflow_peer --device laptop-a
 
-Termux:
+# Run in background
+./build/syncflow_peer --device laptop-a --detach
 
-- `./build/syncflow_peer` — start with hostname or config.json device_name
-- `./build/syncflow_peer --device android-1` — override device name via CLI
+# Show configuration
+./build/syncflow_peer show-config
+```
 
-Start it on the first device, then start it on the second device. Each device will:
+### Windows
+
+```cmd
+# Command Prompt - basic usage
+.\build\Release\syncflow_peer.exe
+
+# With custom device name
+.\build\Release\syncflow_peer.exe --device my-windows-pc
+
+# Background mode (opens in background console)
+.\build\Release\syncflow_peer.exe --device my-windows-pc --detach
+
+# Show configuration
+.\build\Release\syncflow_peer.exe show-config
+```
+
+```powershell
+# PowerShell - basic usage
+./build/Release/syncflow_peer.exe
+
+# With custom device name
+./build/Release/syncflow_peer.exe --device my-windows-pc
+```
+
+### macOS (Homebrew)
+
+If built with Homebrew's OpenSSL:
+```bash
+# May need to set library path
+export DYLD_LIBRARY_PATH=$(brew --prefix)/opt/openssl/lib:$DYLD_LIBRARY_PATH
+
+./build/syncflow_peer --device macbook-air
+```
+
+### Termux (Android)
+
+```bash
+# Build and run on Android
+./build/syncflow_peer --device android-phone
+
+# Run in background
+./build/syncflow_peer --device android-phone --detach
+
+# View logs
+tail -f syncflow.log
+```
+
+### Starting Sync
+
+Start on the first device, then on the second device. Each will:
+
+- broadcast itself via UDP
+- discover other devices
+- establish TCP connections
+- log connection events
+- sync configured files if enabled
 
 - broadcast itself over UDP
 - discover the other device
@@ -82,10 +198,11 @@ Commands:
 
 ### Running in the background
 
-Use `--detach` to run the peer node as a background daemon:
+Use `--detach` to run the peer node as a background process:
 
+**Linux/macOS:**
 ```bash
-# Start in background
+# Start in background daemon
 ./build/syncflow_peer --detach
 
 # With custom device name
@@ -94,19 +211,27 @@ Use `--detach` to run the peer node as a background daemon:
 # View logs
 tail -f syncflow.log
 
-# Kill the background process
+# Kill the daemon
 pkill -f syncflow_peer
-# or find the PID and kill it
-ps aux | grep syncflow_peer
-kill <PID>
 ```
 
-When running with `--detach`:
+**Windows:**
+```cmd
+# Runs in background (new console window)
+.\build\Release\syncflow_peer.exe --device my-windows-pc --detach
 
-- The parent process forks and exits immediately
-- The child runs as a daemon (detached from terminal)
-- Output is redirected to `syncflow.log` in the current directory
-- The process continues running even after you close your terminal
+# View logs
+type syncflow.log
+
+# Stop the process - use Task Manager or:
+taskkill /IM syncflow_peer.exe
+```
+
+**Platform-specific behavior:**
+
+- **Linux/macOS**: Traditional POSIX daemon (forks, detaches from terminal)
+- **Windows**: Background process with output redirected to `syncflow.log`
+- **Termux**: Background process (similar to Linux)
 
 ## File sync config
 
@@ -127,6 +252,78 @@ The default config uses [sync/](sync/) as a demo folder tree.
 
 - UDP discovery: 45454
 - TCP connection: 45455
+
+## Platform-Specific Configuration
+
+### Linux
+
+Configuration files are stored in:
+```
+~/.config/syncflow/
+├── config.json
+└── .syncflow/
+    ├── certs/
+    ├── transfer.log
+    └── trusted_devices.txt
+```
+
+Or use `XDG_CONFIG_HOME` environment variable to change the location.
+
+### macOS
+
+Configuration files are stored in:
+```
+~/Library/Application Support/syncflow/
+├── config.json
+└── .syncflow/
+    ├── certs/
+    ├── transfer.log
+    └── trusted_devices.txt
+```
+
+Caches (if needed):
+```
+~/Library/Caches/syncflow/
+```
+
+### Windows
+
+Configuration files are stored in:
+```
+%APPDATA%\syncflow\
+├── config.json
+└── .syncflow\
+    ├── certs\
+    ├── transfer.log
+    └── trusted_devices.txt
+```
+
+Typical path (example):
+```
+C:\Users\YourUsername\AppData\Roaming\syncflow\
+```
+
+Local app data (caches):
+```
+%LOCALAPPDATA%\syncflow\
+```
+
+### Android/Termux
+
+Configuration files are stored in:
+```
+$HOME/.config/syncflow/
+├── config.json
+└── .syncflow/
+    ├── certs/
+    ├── transfer.log
+    └── trusted_devices.txt
+```
+
+Or in Termux storage:
+```
+/data/data/com.termux/files/home/.config/syncflow/
+```
 
 ## Security
 
