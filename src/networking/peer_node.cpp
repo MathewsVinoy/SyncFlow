@@ -127,7 +127,12 @@ std::string build_source_signature(const std::filesystem::path& source_path) {
     std::ostringstream sig;
     if (std::filesystem::is_regular_file(source_path, ec) && !ec) {
         const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(source_path, ec));
-        const auto mtime = std::filesystem::last_write_time(source_path, ec).time_since_epoch().count();
+        const auto file_time = std::filesystem::last_write_time(source_path, ec);
+        if (ec) {
+            return "missing";
+        }
+        const auto mtime = static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(file_time.time_since_epoch()).count());
         sig << "F|" << source_path.filename().string() << '|' << size << '|' << mtime;
         return sig.str();
     }
@@ -165,11 +170,14 @@ std::string build_source_signature(const std::filesystem::path& source_path) {
             continue;
         }
 
-        const auto mtime = it->last_write_time(ec).time_since_epoch().count();
+        const auto file_time = it->last_write_time(ec);
         if (ec) {
             ec.clear();
             continue;
         }
+
+        const auto mtime = static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(file_time.time_since_epoch()).count());
 
         sig << relative_text << '|' << size << '|' << mtime << ';';
     }
