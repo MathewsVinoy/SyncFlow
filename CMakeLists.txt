@@ -16,6 +16,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Option to control building the Qt GUI. Turned off automatically for Termux/Android.
+option(BUILD_GUI "Build Qt GUI (syncflow_gui)" ON)
+
+# If building on Termux/Android, disable GUI by default
+if(DEFINED ENV{TERMUX_VERSION} OR DEFINED ENV{TERMUX_PREFIX} OR CMAKE_SYSTEM_NAME STREQUAL "Android")
+    message(STATUS "Termux/Android detected - disabling GUI build by default")
+    set(BUILD_GUI OFF CACHE BOOL "Build Qt GUI (syncflow_gui)" FORCE)
+endif()
+
 # Detect platform
 if(WIN32)
     set(PLATFORM_WINDOWS TRUE)
@@ -71,14 +80,20 @@ target_compile_options(syncflow_core PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(Qt5 COMPONENTS Core Gui Widgets Network QUIET)
 
-# Fallback to Qt6 if Qt5 not found
-if(NOT Qt5_FOUND)
-    find_package(Qt6 COMPONENTS Core Gui Widgets Network REQUIRED)
-    set(QT_LIBRARIES Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+# Only try to find Qt when GUI is requested
+if(BUILD_GUI)
+    find_package(Qt5 COMPONENTS Core Gui Widgets Network QUIET)
+
+    # Fallback to Qt6 if Qt5 not found
+    if(NOT Qt5_FOUND)
+        find_package(Qt6 COMPONENTS Core Gui Widgets Network REQUIRED)
+        set(QT_LIBRARIES Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+    else()
+        set(QT_LIBRARIES Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network)
+    endif()
 else()
-    set(QT_LIBRARIES Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network)
+    message(STATUS "Skipping Qt discovery because BUILD_GUI is OFF")
 endif()
 
 if(PLATFORM_WINDOWS)
@@ -93,36 +108,37 @@ target_link_libraries(syncflow_peer PRIVATE syncflow_core)
 target_include_directories(syncflow_peer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(syncflow_peer PRIVATE -Wall -Wextra -Wpedantic)
 
-# Build GUI target if Qt is found
-add_executable(syncflow_gui
-    src/gui/gui_main.cpp
-    src/gui/main_window.cpp
-    src/gui/settings_dialog.cpp
-    src/gui/device_approval_dialog.cpp
-    src/gui/sync_worker.cpp
-    resources/syncflow.qrc
-)
+if(BUILD_GUI)
+    add_executable(syncflow_gui
+        src/gui/gui_main.cpp
+        src/gui/main_window.cpp
+        src/gui/settings_dialog.cpp
+        src/gui/device_approval_dialog.cpp
+        src/gui/sync_worker.cpp
+        resources/syncflow.qrc
+    )
 
-# Ensure headers with Q_OBJECT are processed by automoc
-target_sources(syncflow_gui PRIVATE
-    include/syncflow/gui/main_window.h
-    include/syncflow/gui/settings_dialog.h
-    include/syncflow/gui/device_approval_dialog.h
-    include/syncflow/gui/sync_worker.h
-)
+    # Ensure headers with Q_OBJECT are processed by automoc
+    target_sources(syncflow_gui PRIVATE
+        include/syncflow/gui/main_window.h
+        include/syncflow/gui/settings_dialog.h
+        include/syncflow/gui/device_approval_dialog.h
+        include/syncflow/gui/sync_worker.h
+    )
 
-target_include_directories(syncflow_gui PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+    target_include_directories(syncflow_gui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
 
-target_link_libraries(syncflow_gui PRIVATE
-    syncflow_core
-    ${QT_LIBRARIES}
-)
+    target_link_libraries(syncflow_gui PRIVATE
+        syncflow_core
+        ${QT_LIBRARIES}
+    )
 
-target_compile_options(syncflow_gui PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(syncflow_gui PRIVATE -Wall -Wextra -Wpedantic)
 
-if(PLATFORM_WINDOWS)
-    # Set GUI subsystem for Windows to hide console window
-    set_target_properties(syncflow_gui PROPERTIES WIN32_EXECUTABLE ON)
+    if(PLATFORM_WINDOWS)
+        # Set GUI subsystem for Windows to hide console window
+        set_target_properties(syncflow_gui PROPERTIES WIN32_EXECUTABLE ON)
+    endif()
 endif()

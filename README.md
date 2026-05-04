@@ -25,6 +25,7 @@ The log shows the device name and IP for every discovery and connection event.
 The networking code uses POSIX sockets and standard C++, so it works on Linux and on Android through Termux.
 
 In Termux, install the build tools first, then build with CMake.
+Note: The Qt-based desktop GUI is not built in Termux/Android. Use the CLI target (`syncflow_peer`) when building on Termux. To explicitly enable GUI builds on supported systems, use `-DBUILD_GUI=ON` when running CMake (Qt is required).
 
 ## Build
 
