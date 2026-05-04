@@ -100,6 +100,27 @@ cmake --build build -j4 --config Release
 
 Run the executable on all devices on the same network.
 
+## Qt GUI (desktop UI)
+
+A Qt-based desktop GUI is available as a separate target `syncflow_gui` and provides a graphical interface for discovery, device approval, and file sync monitoring.
+
+Build the GUI target after configuring CMake (in the repository root):
+
+```bash
+cmake -S . -B build
+cmake --build build --target syncflow_gui -j$(nproc)
+```
+
+Run the GUI from the build directory:
+
+```bash
+cd build
+./syncflow_gui
+```
+
+On Windows run `syncflow_gui.exe` from the build output folder. If the app fails to start due to missing Qt libraries, run it with the appropriate library path environment variable (for example `LD_LIBRARY_PATH` on Linux).
+
+
 ### Linux/macOS
 
 ```bash
