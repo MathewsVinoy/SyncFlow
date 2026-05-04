@@ -393,7 +393,12 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
 bool PeerNode::receive_file_payload(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size, std::uint64_t& bytes_received) {
     bytes_received = 0;
 
-    std::filesystem::create_directories(output_path.parent_path());
+    std::error_code ec;
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+        logger_.info("failed to create parent directories: " + output_path.parent_path().string() + " error=" + ec.message());
+        return false;
+    }
 
     std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
     if (!output) {
