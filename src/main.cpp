@@ -7,10 +7,14 @@
 #include <fstream>
 #include <iostream>
 #include <array>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <sstream>
+
+#if !defined(_WIN32) && !defined(_WIN64)
+    #include <unistd.h>
+    #include <sys/types.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+#endif
 
 static std::filesystem::path find_config_path() {
     const std::array<std::filesystem::path, 4> candidates{
@@ -84,37 +88,48 @@ static bool write_device_to_config(const std::filesystem::path& config_path, con
 }
 
 static bool daemonize(const std::filesystem::path& log_dir) {
-    // Create log directory if needed
+#ifdef _WIN32
+    // Windows: run as background process (not traditional daemon)
     std::error_code ec;
     std::filesystem::create_directories(log_dir, ec);
 
-    // Fork to background
+    const auto log_file = log_dir / "syncflow.log";
+    std::cout << "Running in background mode.\n"
+              << "Logs: " << log_file << "\n"
+              << "To view logs: type 'type " << log_file.string() << "'\n"
+              << "To stop: press Ctrl+C or close the window\n";
+
+    // Redirect output to log file
+    freopen(log_file.c_str(), "ab", stdout);
+    freopen(log_file.c_str(), "ab", stderr);
+    return true;
+#else
+    // Unix/Linux/macOS: fork daemon
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir, ec);
+
     const pid_t pid = ::fork();
     if (pid < 0) {
         std::cerr << "fork failed\n";
         return false;
     }
     if (pid > 0) {
-        // Parent: exit cleanly
         std::cout << "Started syncflow_peer in background (PID " << pid << ")\n";
         std::cout << "View logs in: " << log_dir / "syncflow.log" << "\n";
         std::exit(0);
     }
 
     // Child process continues
-    // Create a new session to detach from terminal
     if (::setsid() < 0) {
         std::cerr << "setsid failed\n";
         return false;
     }
 
-    // Change working directory to root
     if (::chdir("/") < 0) {
         std::cerr << "chdir failed\n";
         return false;
     }
 
-    // Redirect stdout/stderr to log file
     const auto log_file = log_dir / "syncflow.log";
     const int fd = ::open(log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd < 0) {
@@ -122,12 +137,10 @@ static bool daemonize(const std::filesystem::path& log_dir) {
         return false;
     }
 
-    // Redirect stdout and stderr
     ::dup2(fd, STDOUT_FILENO);
     ::dup2(fd, STDERR_FILENO);
     ::close(fd);
 
-    // Redirect stdin to /dev/null
     const int null_fd = ::open("/dev/null", O_RDONLY);
     if (null_fd >= 0) {
         ::dup2(null_fd, STDIN_FILENO);
@@ -135,6 +148,7 @@ static bool daemonize(const std::filesystem::path& log_dir) {
     }
 
     return true;
+#endif
 }
 
 int main(int argc, char** argv) {
