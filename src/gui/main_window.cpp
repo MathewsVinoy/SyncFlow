@@ -29,8 +29,8 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowIcon(QIcon(":/icons/syncflow.png"));
     setGeometry(100, 100, 1000, 700);
 
-    device_name_ = syncflow::platform::get_hostname();
-    local_ip_ = syncflow::platform::get_local_ipv4();
+    device_name_ = QString::fromStdString(syncflow::platform::get_hostname());
+    local_ip_ = QString::fromStdString(syncflow::platform::get_local_ipv4());
 
     setupUI();
     createMenuBar();
