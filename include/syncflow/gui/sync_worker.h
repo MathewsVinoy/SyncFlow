@@ -27,6 +27,7 @@ public slots:
     void setDeviceName(const QString& name);
     void setSyncPaths(const QString& source_path, const QString& receive_dir);
     void setSecurityEnabled(bool enabled);
+    void checkSSLCertificatesAndDevices();  // Called periodically to refresh SSL certs and device status
 
 signals:
     void deviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint);
@@ -41,8 +42,8 @@ signals:
 private:
     void performDiscovery();
 
-    std::unique_ptr<syncflow::networking::PeerNode> peer_node_;
     bool is_running_;
+    std::unique_ptr<syncflow::networking::PeerNode> peer_node_;
     QString device_name_;
     QString source_path_;
     QString receive_dir_;

@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QProgressBar>
 #include <QThread>
+#include <QTimer>
 #include <memory>
 
 namespace syncflow {
@@ -34,8 +35,7 @@ private slots:
     void onSettingsClicked();
     void onApproveClicked();
     void onRemoveClicked();
-    void onStartStopClicked();
-    void onRefreshClicked();
+    void onPeriodicCheck();  // Called every 10 seconds to check SSL and connections
 
 private:
     void setupUI();
@@ -45,27 +45,24 @@ private:
     void saveSettings();
     void updateDeviceList();
     void startSyncWorker();
-    void stopSyncWorker();
+    void checkSSLCertificates();
 
     // UI Components
     QListWidget* device_list_widget_;
     QLabel* status_label_;
     QLabel* device_name_label_;
     QLabel* ip_address_label_;
-    QLabel* current_sync_label_;
-    QProgressBar* sync_progress_;
-    QPushButton* start_stop_button_;
+    QLabel* sync_status_label_;
     QPushButton* settings_button_;
     QPushButton* approve_button_;
     QPushButton* remove_button_;
-    QPushButton* refresh_button_;
 
     // Backend
     std::unique_ptr<SyncWorker> sync_worker_;
     QThread* worker_thread_;
+    QTimer* periodic_timer_;  // 10-second timer for SSL and connection checks
     
     // State
-    bool is_running_;
     QString device_name_;
     QString local_ip_;
 };

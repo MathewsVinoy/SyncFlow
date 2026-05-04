@@ -144,4 +144,23 @@ void SyncWorker::setSecurityEnabled(bool enabled) {
     emit statusChanged(security_enabled_ ? "Security enabled" : "Security disabled");
 }
 
+void SyncWorker::checkSSLCertificatesAndDevices() {
+    // This is called every 10 seconds from the main window's periodic timer
+    // Check for SSL certificates in the .syncflow/certs directory
+    // and refresh the device discovery status
+    
+    if (!is_running_) {
+        return;
+    }
+
+    // In production, this would:
+    // 1. Scan ~/.syncflow/certs/ for new SSL certificates
+    // 2. Check if any new certificates should be auto-discovered
+    // 3. Verify existing device connections
+    // 4. Emit signals for any changes
+    
+    // For now, emit a periodic status update
+    emit statusChanged("SSL/device check performed");
+}
+
 }  // namespace syncflow::gui

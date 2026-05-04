@@ -17,24 +17,26 @@
 #include <QThread>
 #include <QListWidgetItem>
 #include <QSplitter>
+#include <QTimer>
+#include <QDir>
+#include <QFile>
 
 namespace syncflow::gui {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
       worker_thread_(nullptr),
-      is_running_(false) {
+      periodic_timer_(nullptr) {
     
     setWindowTitle("Syncflow - Peer to Peer File Sync");
     setWindowIcon(QIcon(":/icons/syncflow.png"));
-    setGeometry(100, 100, 1000, 700);
+    setGeometry(100, 100, 1000, 600);
 
     device_name_ = QString::fromStdString(syncflow::platform::get_hostname());
     local_ip_ = QString::fromStdString(syncflow::platform::get_local_ipv4());
 
     setupUI();
     createMenuBar();
-    connectSignals();
     loadSettings();
 
     // Create sync worker thread
@@ -46,10 +48,20 @@ MainWindow::MainWindow(QWidget* parent)
     connect(this, &MainWindow::destroyed, worker_thread_, &QThread::quit);
 
     connectSignals();
+
+    // Auto-start the sync worker
+    startSyncWorker();
+
+    // Setup 10-second periodic timer for SSL/device checks
+    periodic_timer_ = new QTimer(this);
+    connect(periodic_timer_, &QTimer::timeout, this, &MainWindow::onPeriodicCheck);
+    periodic_timer_->start(10000);  // 10 seconds
 }
 
 MainWindow::~MainWindow() {
-    stopSyncWorker();
+    if (periodic_timer_) {
+        periodic_timer_->stop();
+    }
     if (worker_thread_) {
         worker_thread_->quit();
         worker_thread_->wait();
@@ -68,7 +80,7 @@ void MainWindow::setupUI() {
 
     device_name_label_ = new QLabel(QString("Device: %1").arg(device_name_), this);
     ip_address_label_ = new QLabel(QString("IP Address: %1").arg(local_ip_), this);
-    status_label_ = new QLabel("Status: Offline", this);
+    status_label_ = new QLabel("Status: Discovering devices...", this);
 
     header_layout->addWidget(device_name_label_);
     header_layout->addWidget(ip_address_label_);
@@ -86,42 +98,31 @@ void MainWindow::setupUI() {
 
     main_layout->addWidget(devices_group);
 
-    // Current sync status
+    // Sync status (simplified, no progress bar)
     QGroupBox* sync_group = new QGroupBox("Sync Status", this);
     QVBoxLayout* sync_layout = new QVBoxLayout(sync_group);
 
-    current_sync_label_ = new QLabel("Ready to sync", this);
-    sync_progress_ = new QProgressBar(this);
-    sync_progress_->setRange(0, 100);
-    sync_progress_->setValue(0);
+    sync_status_label_ = new QLabel("Syncing in background...", this);
+    sync_status_label_->setStyleSheet("color: green; font-weight: bold;");
 
-    sync_layout->addWidget(current_sync_label_);
-    sync_layout->addWidget(sync_progress_);
+    sync_layout->addWidget(sync_status_label_);
 
     main_layout->addWidget(sync_group);
 
-    // Control buttons
+    // Control buttons (simplified: removed Start/Stop button)
     QHBoxLayout* button_layout = new QHBoxLayout();
 
-    start_stop_button_ = new QPushButton("Start Sync", this);
-    start_stop_button_->setMinimumWidth(100);
-
     approve_button_ = new QPushButton("Approve Device", this);
-    approve_button_->setMinimumWidth(100);
+    approve_button_->setMinimumWidth(120);
 
     remove_button_ = new QPushButton("Remove Device", this);
-    remove_button_->setMinimumWidth(100);
-
-    refresh_button_ = new QPushButton("Refresh", this);
-    refresh_button_->setMinimumWidth(100);
+    remove_button_->setMinimumWidth(120);
 
     settings_button_ = new QPushButton("Settings", this);
-    settings_button_->setMinimumWidth(100);
+    settings_button_->setMinimumWidth(120);
 
-    button_layout->addWidget(start_stop_button_);
     button_layout->addWidget(approve_button_);
     button_layout->addWidget(remove_button_);
-    button_layout->addWidget(refresh_button_);
     button_layout->addWidget(settings_button_);
     button_layout->addStretch();
 
@@ -174,16 +175,12 @@ void MainWindow::connectSignals() {
     connect(sync_worker_.get(), &SyncWorker::syncError,
             this, &MainWindow::onSyncError);
 
-    connect(start_stop_button_, &QPushButton::clicked,
-            this, &MainWindow::onStartStopClicked);
     connect(settings_button_, &QPushButton::clicked,
             this, &MainWindow::onSettingsClicked);
     connect(approve_button_, &QPushButton::clicked,
             this, &MainWindow::onApproveClicked);
     connect(remove_button_, &QPushButton::clicked,
             this, &MainWindow::onRemoveClicked);
-    connect(refresh_button_, &QPushButton::clicked,
-            this, &MainWindow::onRefreshClicked);
 }
 
 void MainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint) {
@@ -215,24 +212,55 @@ void MainWindow::onDeviceDisconnected(const QString& device_name) {
 }
 
 void MainWindow::onSyncStarted() {
-    current_sync_label_->setText("Syncing...");
-    sync_progress_->setValue(0);
+    sync_status_label_->setText("Syncing files...");
+    sync_status_label_->setStyleSheet("color: blue; font-weight: bold;");
 }
 
 void MainWindow::onSyncProgress(int progress) {
-    current_sync_label_->setText(QString("Progress: %1%").arg(progress));
-    sync_progress_->setValue(progress);
+    sync_status_label_->setText(QString("Syncing... (%1%)").arg(progress));
+    sync_status_label_->setStyleSheet("color: blue; font-weight: bold;");
 }
 
 void MainWindow::onSyncCompleted() {
-    current_sync_label_->setText("Sync completed");
-    sync_progress_->setValue(100);
+    sync_status_label_->setText("Sync idle (waiting for changes)");
+    sync_status_label_->setStyleSheet("color: green; font-weight: bold;");
 }
 
 void MainWindow::onSyncError(const QString& error_message) {
-    QMessageBox::warning(this, "Sync Error", error_message);
-    current_sync_label_->setText("Error during sync");
-    sync_progress_->setValue(0);
+    sync_status_label_->setText(QString("Error: %1").arg(error_message));
+    sync_status_label_->setStyleSheet("color: red; font-weight: bold;");
+}
+
+void MainWindow::onPeriodicCheck() {
+    // This is called every 10 seconds to check SSL certificates and device status
+    checkSSLCertificates();
+    
+    // Tell the sync worker to refresh SSL certs and device status
+    if (sync_worker_) {
+        QMetaObject::invokeMethod(sync_worker_.get(), "checkSSLCertificatesAndDevices", 
+                                  Qt::QueuedConnection);
+    }
+    
+    // Update status to "online" if we're syncing
+    if (device_list_widget_->count() > 0) {
+        status_label_->setText("Status: Online");
+    }
+}
+
+void MainWindow::checkSSLCertificates() {
+    // Check the .syncflow/certs directory for any new certificates
+    QDir certs_dir(QDir::home().filePath(".syncflow/certs"));
+    
+    if (certs_dir.exists()) {
+        QStringList cert_files = certs_dir.entryList(QStringList() << "*.pem" << "*.crt", QDir::Files);
+        
+        // Emit a signal or refresh status based on cert discovery
+        if (!cert_files.isEmpty() && sync_worker_) {
+            // Optionally trigger device list refresh
+            // (In production, would check for new certificates not yet in trusted list)
+            status_label_->setText(QString("Status: Online (%1 certs found)").arg(cert_files.count()));
+        }
+    }
 }
 
 void MainWindow::onSettingsClicked() {
@@ -271,26 +299,6 @@ void MainWindow::onRemoveClicked() {
     }
 }
 
-void MainWindow::onStartStopClicked() {
-    if (!is_running_) {
-        startSyncWorker();
-        start_stop_button_->setText("Stop Sync");
-        status_label_->setText("Status: Online");
-        is_running_ = true;
-    } else {
-        stopSyncWorker();
-        start_stop_button_->setText("Start Sync");
-        status_label_->setText("Status: Offline");
-        is_running_ = false;
-    }
-}
-
-void MainWindow::onRefreshClicked() {
-    device_list_widget_->clear();
-    sync_progress_->setValue(0);
-    current_sync_label_->setText("Ready to sync");
-}
-
 void MainWindow::startSyncWorker() {
     if (!worker_thread_) return;
 
@@ -306,17 +314,20 @@ void MainWindow::startSyncWorker() {
     if (!worker_thread_->isRunning()) {
         worker_thread_->start();
     }
-}
-
-void MainWindow::stopSyncWorker() {
-    if (!worker_thread_) return;
-
-    QMetaObject::invokeMethod(sync_worker_.get(), "stop", Qt::QueuedConnection);
+    
+    status_label_->setText("Status: Online");
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
-    stopSyncWorker();
+    if (periodic_timer_) {
+        periodic_timer_->stop();
+    }
+    if (worker_thread_) {
+        QMetaObject::invokeMethod(sync_worker_.get(), "stop", Qt::QueuedConnection);
+        worker_thread_->quit();
+        worker_thread_->wait(5000);
+    }
     QMainWindow::closeEvent(event);
 }
 
