@@ -1,7 +1,7 @@
 #include "syncflow/security/integrity_checker.h"
 
-#include <openssl/hmac.h>
-#include <openssl/sha.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -18,13 +18,21 @@ std::string IntegrityChecker::bytes_to_hex(const std::vector<unsigned char>& byt
 }
 
 std::string IntegrityChecker::compute_sha256(const void* data, std::size_t data_len) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, data, data_len);
-    SHA256_Final(hash, &sha256);
+    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+    if (!mdctx) return {};
 
-    std::vector<unsigned char> hash_vec(hash, hash + SHA256_DIGEST_LENGTH);
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len = 0;
+
+    if (!EVP_DigestInit_ex(mdctx, EVP_sha256(), nullptr) ||
+        !EVP_DigestUpdate(mdctx, data, data_len) ||
+        !EVP_DigestFinal_ex(mdctx, hash, &hash_len)) {
+        EVP_MD_CTX_free(mdctx);
+        return {};
+    }
+
+    EVP_MD_CTX_free(mdctx);
+    std::vector<unsigned char> hash_vec(hash, hash + hash_len);
     return bytes_to_hex(hash_vec);
 }
 
@@ -32,28 +40,66 @@ std::string IntegrityChecker::compute_file_sha256(const std::string& file_path) 
     std::ifstream file(file_path, std::ios::binary);
     if (!file) return {};
 
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
+    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+    if (!mdctx) return {};
+
+    if (!EVP_DigestInit_ex(mdctx, EVP_sha256(), nullptr)) {
+        EVP_MD_CTX_free(mdctx);
+        return {};
+    }
 
     std::vector<char> buffer(4096);
     while (file.read(buffer.data(), buffer.size())) {
-        SHA256_Update(&sha256, buffer.data(), file.gcount());
+        if (!EVP_DigestUpdate(mdctx, buffer.data(), file.gcount())) {
+            EVP_MD_CTX_free(mdctx);
+            return {};
+        }
     }
 
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_Final(hash, &sha256);
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len = 0;
+    if (!EVP_DigestFinal_ex(mdctx, hash, &hash_len)) {
+        EVP_MD_CTX_free(mdctx);
+        return {};
+    }
 
-    std::vector<unsigned char> hash_vec(hash, hash + SHA256_DIGEST_LENGTH);
+    EVP_MD_CTX_free(mdctx);
+    std::vector<unsigned char> hash_vec(hash, hash + hash_len);
     return bytes_to_hex(hash_vec);
 }
 
 std::string IntegrityChecker::compute_hmac_sha256(const std::string& key, const void* data, std::size_t data_len) {
+    EVP_MAC* mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
+    if (!mac) return {};
+
+    EVP_MAC_CTX* mctx = EVP_MAC_CTX_new(mac);
+    EVP_MAC_free(mac);
+    if (!mctx) return {};
+
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_utf8_string("digest", const_cast<char*>("SHA256"), 0),
+        OSSL_PARAM_construct_end()
+    };
+
+    if (!EVP_MAC_init(mctx, reinterpret_cast<const unsigned char*>(key.c_str()),
+                      key.size(), params)) {
+        EVP_MAC_CTX_free(mctx);
+        return {};
+    }
+
+    if (!EVP_MAC_update(mctx, static_cast<const unsigned char*>(data), data_len)) {
+        EVP_MAC_CTX_free(mctx);
+        return {};
+    }
+
     unsigned char hmac[EVP_MAX_MD_SIZE];
-    unsigned int hmac_len = 0;
+    size_t hmac_len = 0;
+    if (!EVP_MAC_final(mctx, hmac, &hmac_len, EVP_MAX_MD_SIZE)) {
+        EVP_MAC_CTX_free(mctx);
+        return {};
+    }
 
-    HMAC(EVP_sha256(), key.c_str(), static_cast<int>(key.size()),
-         static_cast<const unsigned char*>(data), data_len, hmac, &hmac_len);
-
+    EVP_MAC_CTX_free(mctx);
     std::vector<unsigned char> hmac_vec(hmac, hmac + hmac_len);
     return bytes_to_hex(hmac_vec);
 }
@@ -62,21 +108,41 @@ std::string IntegrityChecker::compute_file_hmac(const std::string& key, const st
     std::ifstream file(file_path, std::ios::binary);
     if (!file) return {};
 
-    HMAC_CTX* ctx = HMAC_CTX_new();
-    if (!ctx) return {};
+    EVP_MAC* mac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
+    if (!mac) return {};
 
-    HMAC_Init_ex(ctx, key.c_str(), static_cast<int>(key.size()), EVP_sha256(), nullptr);
+    EVP_MAC_CTX* mctx = EVP_MAC_CTX_new(mac);
+    EVP_MAC_free(mac);
+    if (!mctx) return {};
+
+    OSSL_PARAM params[] = {
+        OSSL_PARAM_construct_utf8_string("digest", const_cast<char*>("SHA256"), 0),
+        OSSL_PARAM_construct_end()
+    };
+
+    if (!EVP_MAC_init(mctx, reinterpret_cast<const unsigned char*>(key.c_str()),
+                      key.size(), params)) {
+        EVP_MAC_CTX_free(mctx);
+        return {};
+    }
 
     std::vector<char> buffer(4096);
     while (file.read(buffer.data(), buffer.size())) {
-        HMAC_Update(ctx, reinterpret_cast<const unsigned char*>(buffer.data()), file.gcount());
+        if (!EVP_MAC_update(mctx, reinterpret_cast<const unsigned char*>(buffer.data()),
+                           file.gcount())) {
+            EVP_MAC_CTX_free(mctx);
+            return {};
+        }
     }
 
     unsigned char hmac[EVP_MAX_MD_SIZE];
-    unsigned int hmac_len = 0;
-    HMAC_Final(ctx, hmac, &hmac_len);
-    HMAC_CTX_free(ctx);
+    size_t hmac_len = 0;
+    if (!EVP_MAC_final(mctx, hmac, &hmac_len, EVP_MAX_MD_SIZE)) {
+        EVP_MAC_CTX_free(mctx);
+        return {};
+    }
 
+    EVP_MAC_CTX_free(mctx);
     std::vector<unsigned char> hmac_vec(hmac, hmac + hmac_len);
     return bytes_to_hex(hmac_vec);
 }

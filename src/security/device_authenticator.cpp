@@ -13,6 +13,10 @@ bool DeviceAuthenticator::authenticate_peer(const std::string& peer_name,
                                             const std::string& peer_fingerprint,
                                             const std::string& peer_ip,
                                             bool is_trusted) const {
+    // Suppress unused parameter warnings
+    (void)peer_name;
+    (void)peer_ip;
+    
     // Reject if fingerprints match (same device)
     if (peer_fingerprint == local_fingerprint_) {
         return false;
