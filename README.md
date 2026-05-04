@@ -185,6 +185,74 @@ export DYLD_LIBRARY_PATH=$(brew --prefix)/opt/openssl/lib:$DYLD_LIBRARY_PATH
 tail -f syncflow.log
 ```
 
+## Android app (mobile)
+
+This repository includes an Android app under the `android/` directory. The Android app is a lightweight UI whose primary purpose is:
+
+- edit and persist `config.json` into the app private storage
+- display discovered/connected peer information (read from a status file written by the native layer)
+- start a foreground background service that launches a native "peer" library (JNI)
+
+Prerequisites
+
+- Android SDK 36 (compileSdk 36), Android NDK (r23+ recommended; adjust as needed), JDK 11
+- Gradle wrapper is included in `android/`, use `./gradlew` to build
+- Android Studio is recommended for rapid iteration and debugging
+
+Build (debug)
+
+From repository root:
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+Install on a connected device or emulator:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Run / Usage
+
+- Open the app. Use "Edit Config" to edit the configuration saved at the app private path (e.g. `/data/data/com.syncflow/files/config.json`).
+- Use "Device Info" to view the current `sync_status.json` written by the native library (this is where discovered peers are shown).
+- Tap "Start Background Sync" to start `SyncService`. `SyncService` runs as a foreground service and calls the JNI `native-lib`.
+
+Notes and integration
+
+- The Android app currently ships with a small JNI stub: `android/app/src/main/cpp/native-lib.cpp`. The stub simulates background work and writes a `sync_status.json` file into the same directory as the config file so the UI can display peers while native integration is developed.
+- To integrate the full `syncflow_core` native peer on Android you will need to:
+  - build `syncflow_core` and its dependencies for Android ABIs (armeabi-v7a, arm64-v8a, x86_64) using the NDK toolchains and CMake
+  - export a shared library exposing JNI-friendly functions (start/stop/status) or adapt `native-lib` to call into `PeerNode`
+  - adjust `android/app/src/main/cpp/CMakeLists.txt` to link the built libraries into `native-lib` (or replace it)
+
+Debugging and logs
+
+- Use `adb logcat` and filter for "syncflow" to see logs from the native stub and service:
+
+```bash
+adb logcat | grep syncflow
+```
+
+- The UI writes/reads `config.json` from the app private storage. To inspect from the host (device must be rooted or use `run-as`):
+
+```bash
+adb shell run-as com.syncflow cat files/config.json
+adb shell run-as com.syncflow cat files/sync_status.json
+```
+
+Boot/start behavior and permissions
+
+- `BootReceiver` is registered to start the `SyncService` after device boot. Some OEMs restrict auto-start — the user may need to allow autostart or open the app once.
+- The service is implemented as a foreground service (notification) to stay running reliably. Android will still enforce background restrictions on some OEMs; test on target devices.
+
+If you want, I can next:
+
+- add Gradle NDK config and per-ABI packaging to `android/app/build.gradle.kts` and test a debug build,
+- or replace the JNI stub with a cross-compiled `syncflow_core` library (this requires NDK setup and addressing platform-specific APIs).
+
 ### Starting Sync
 
 Start on the first device, then on the second device. Each will:
