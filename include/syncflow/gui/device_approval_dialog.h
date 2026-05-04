@@ -11,8 +11,8 @@ class DeviceApprovalDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit DeviceApprovalDialog(const QString& device_name, const QString& fingerprint,
-                                   const QString& ip_address, QWidget* parent = nullptr);
+    explicit DeviceApprovalDialog(const QString& device_name, const QString& device_ip,
+                                   const QString& fingerprint, QWidget* parent = nullptr);
 
     bool isApproved() const { return approved_; }
 

@@ -30,6 +30,7 @@ public slots:
 signals:
     void deviceDiscovered(const QString& device_name, const QString& device_ip);
     void deviceConnected(const QString& device_name);
+    void deviceDisconnected(const QString& device_name);
     void syncStarted();
     void syncProgress(int progress);
     void syncCompleted();
