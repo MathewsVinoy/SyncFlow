@@ -39,7 +39,7 @@ private:
     std::set<std::string> active_connections_;
     std::set<std::string> pending_connections_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_connect_attempt_;
-    std::mutex active_mutex_;
+    mutable std::mutex active_mutex_;
     std::mutex connect_mutex_;
     std::mutex share_mutex_;
     bool share_in_progress_{false};
