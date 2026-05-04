@@ -120,7 +120,6 @@ cd build
 
 On Windows run `syncflow_gui.exe` from the build output folder. If the app fails to start due to missing Qt libraries, run it with the appropriate library path environment variable (for example `LD_LIBRARY_PATH` on Linux).
 
-
 ### Linux/macOS
 
 ```bash
