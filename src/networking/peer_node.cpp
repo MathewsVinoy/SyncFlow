@@ -97,12 +97,16 @@ bool recv_exact(int fd, void* data, std::size_t size) {
     return true;
 }
 
-bool recv_line(int fd, std::string& line) {
+bool recv_line(int fd, std::string& line, bool& timed_out) {
+    timed_out = false;
     line.clear();
     char ch = '\0';
     while (true) {
         const ssize_t received = ::recv(fd, &ch, 1, 0);
         if (received <= 0) {
+            if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                timed_out = true;
+            }
             return false;
         }
         if (ch == '\n') {
@@ -112,6 +116,65 @@ bool recv_line(int fd, std::string& line) {
             line.push_back(ch);
         }
     }
+}
+
+std::string build_source_signature(const std::filesystem::path& source_path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source_path, ec) || ec) {
+        return "missing";
+    }
+
+    std::ostringstream sig;
+    if (std::filesystem::is_regular_file(source_path, ec) && !ec) {
+        const auto size = static_cast<std::uint64_t>(std::filesystem::file_size(source_path, ec));
+        const auto mtime = std::filesystem::last_write_time(source_path, ec).time_since_epoch().count();
+        sig << "F|" << source_path.filename().string() << '|' << size << '|' << mtime;
+        return sig.str();
+    }
+
+    if (!std::filesystem::is_directory(source_path, ec) || ec) {
+        return "unsupported";
+    }
+
+    sig << "D|";
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+    for (std::filesystem::recursive_directory_iterator it(source_path, options), end; it != end; ++it) {
+        const auto relative = std::filesystem::relative(it->path(), source_path, ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+
+        const std::string relative_text = relative.generic_string();
+        if (relative_text.rfind(".syncflow", 0) == 0) {
+            if (it->is_directory(ec) && !ec) {
+                it.disable_recursion_pending();
+            }
+            ec.clear();
+            continue;
+        }
+
+        if (!it->is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+
+        const auto size = static_cast<std::uint64_t>(it->file_size(ec));
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+
+        const auto mtime = it->last_write_time(ec).time_since_epoch().count();
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+
+        sig << relative_text << '|' << size << '|' << mtime << ';';
+    }
+
+    return sig.str();
 }
 
 
@@ -609,7 +672,17 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
     const std::string hello = "HELLO|" + serialize_peer_info(self);
     (void)send_all(fd, hello);
 
+    timeval rcv_timeout{};
+    rcv_timeout.tv_sec = 1;
+    rcv_timeout.tv_usec = 0;
+    (void)::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout));
+
     maybe_sync_file(fd, peer);
+
+    std::string last_source_signature;
+    if (should_send_file_to_peer(peer)) {
+        last_source_signature = build_source_signature(file_sync_config_.source_path);
+    }
 
     std::filesystem::path current_sync_base;
     bool current_sync_is_dir = false;
@@ -620,7 +693,19 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
     while (running_) {
         std::string line;
-        if (!recv_line(fd, line)) {
+        bool recv_timed_out = false;
+        if (!recv_line(fd, line, recv_timed_out)) {
+            if (recv_timed_out) {
+                if (should_send_file_to_peer(peer)) {
+                    const std::string current_signature = build_source_signature(file_sync_config_.source_path);
+                    if (current_signature != last_source_signature) {
+                        logger_.info("realtime change detected; syncing updates to " + peer.name + " @ " + peer.ip);
+                        maybe_sync_file(fd, peer);
+                        last_source_signature = build_source_signature(file_sync_config_.source_path);
+                    }
+                }
+                continue;
+            }
             break;
         }
 
