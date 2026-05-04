@@ -1,8 +1,12 @@
 package com.syncflow
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
 import java.io.File
@@ -13,6 +17,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var receiveDirEdit: EditText
     private lateinit var saveButton: Button
 
+    private lateinit var pickDirLauncher: ActivityResultLauncher<Uri?>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -21,6 +27,22 @@ class SettingsActivity : AppCompatActivity() {
         sourcePathEdit = findViewById(R.id.sourcePathEdit)
         receiveDirEdit = findViewById(R.id.receiveDirEdit)
         saveButton = findViewById(R.id.saveButton)
+
+        pickDirLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            if (uri != null) {
+                try {
+                    val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    contentResolver.takePersistableUriPermission(uri, takeFlags)
+                } catch (e: Exception) {
+                    // ignore permission errors
+                }
+                receiveDirEdit.setText(uri.toString())
+            }
+        }
+
+        // make receive dir field launch the SAF picker when clicked
+        receiveDirEdit.isFocusable = false
+        receiveDirEdit.setOnClickListener { pickDirLauncher.launch(null) }
 
         loadConfig()
 
