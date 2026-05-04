@@ -126,14 +126,12 @@ void DeviceApprovalDialog::onCopyFingerprintClicked() {
 }
 
 void DeviceApprovalDialog::onApproveClicked() {
-    approved_ = true;
-    setResult(QDialog::Accepted);
+    setResult(Approved);
     accept();
 }
 
 void DeviceApprovalDialog::onDenyClicked() {
-    approved_ = false;
-    setResult(QDialog::Rejected);
+    setResult(Denied);
     reject();
 }
 
