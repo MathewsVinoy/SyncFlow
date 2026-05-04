@@ -340,14 +340,28 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
     }
 
     const std::string root_name = basename_for_path(root_path);
+    const auto scan_options = std::filesystem::directory_options::skip_permission_denied;
+    std::uint32_t total_files = 0;
+    std::uint64_t total_size = 0;
+    for (std::filesystem::recursive_directory_iterator it(root_path, scan_options), end; it != end; ++it) {
+        if (it->is_regular_file()) {
+            ++total_files;
+            total_size += static_cast<std::uint64_t>(std::filesystem::file_size(it->path()));
+        }
+    }
+
     std::ostringstream begin;
-    begin << "SYNC_BEGIN|" << root_name << "|DIR\n";
+    begin << "SYNC_BEGIN|" << root_name << "|DIR|" << total_files << '|' << total_size << '\n';
     if (!send_all(fd, begin.str())) {
         return false;
     }
 
-    const auto options = std::filesystem::directory_options::skip_permission_denied;
-    for (std::filesystem::recursive_directory_iterator it(root_path, options), end; it != end; ++it) {
+    logger_.info("directory sync started: source=" + root_path.string() +
+                 " files=" + std::to_string(total_files) +
+                 " total_bytes=" + std::to_string(total_size));
+
+    std::uint32_t sent_files = 0;
+    for (std::filesystem::recursive_directory_iterator it(root_path, scan_options), end; it != end; ++it) {
         const auto& entry = *it;
         const auto relative = std::filesystem::relative(entry.path(), root_path);
         const std::string relative_text = relative.generic_string();
@@ -368,6 +382,11 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
             return false;
         }
         bytes_sent += file_bytes;
+        ++sent_files;
+
+        logger_.info("sent file " + std::to_string(sent_files) + "/" + std::to_string(total_files) +
+                     ": " + relative_text + " bytes=" + std::to_string(file_bytes) +
+                     " total_sent=" + std::to_string(bytes_sent));
 
         std::ostringstream file_done;
         file_done << "FILE_DONE|" << relative_text << '|' << file_bytes << '\n';
@@ -378,6 +397,9 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
 
     std::ostringstream end;
     end << "SYNC_END|" << root_name << "|DIR\n";
+    logger_.info("directory sync complete: source=" + root_path.string() +
+                 " files_sent=" + std::to_string(sent_files) +
+                 " bytes_sent=" + std::to_string(bytes_sent));
     return send_all(fd, end.str());
 }
 
@@ -479,6 +501,10 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
 
     std::filesystem::path current_sync_base;
     bool current_sync_is_dir = false;
+    std::uint32_t current_sync_total_files = 0;
+    std::uint32_t current_sync_received_files = 0;
+    std::uint64_t current_sync_total_bytes = 0;
+    std::uint64_t current_sync_received_bytes = 0;
 
     while (running_) {
         std::string line;
@@ -523,10 +549,34 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
             }
 
             if (kind == "DIR") {
-                current_sync_base = file_sync_config_.receive_dir / name;
+                current_sync_base = file_sync_config_.receive_dir;
                 current_sync_is_dir = true;
-                std::filesystem::create_directories(current_sync_base);
-                logger_.info("directory sync started from " + peer.name + " @ " + peer.ip + " base=" + current_sync_base.string());
+                current_sync_received_files = 0;
+                current_sync_received_bytes = 0;
+                current_sync_total_files = 0;
+                current_sync_total_bytes = 0;
+
+                try {
+                    const std::size_t fourth_sep = line.find('|', third_sep + 1);
+                    if (fourth_sep != std::string::npos) {
+                        current_sync_total_files = static_cast<std::uint32_t>(std::stoul(line.substr(third_sep + 1, fourth_sep - third_sep - 1)));
+                        current_sync_total_bytes = static_cast<std::uint64_t>(std::stoull(line.substr(fourth_sep + 1)));
+                    }
+                } catch (...) {
+                    logger_.info("failed to parse directory sync metadata from " + peer.name + " @ " + peer.ip + " line=" + line);
+                }
+
+                std::error_code ec;
+                std::filesystem::create_directories(current_sync_base, ec);
+                if (ec) {
+                    logger_.info("failed to create receive base dir: " + current_sync_base.string() + " error=" + ec.message());
+                }
+
+                logger_.info("directory sync started from " + peer.name + " @ " + peer.ip +
+                             " base=" + current_sync_base.string() +
+                             " source=" + name +
+                             " files=" + std::to_string(current_sync_total_files) +
+                             " total_bytes=" + std::to_string(current_sync_total_bytes));
                 continue;
             }
         }
@@ -566,20 +616,30 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
             const std::filesystem::path output_path = current_sync_base / std::filesystem::path(relative_path);
             std::uint64_t received_bytes = 0;
             if (receive_file_payload(fd, output_path, expected_size, received_bytes)) {
-                logger_.info("file received successfully from " + peer.name + " @ " + peer.ip +
-                             " saved=" + output_path.string() + " bytes=" + std::to_string(received_bytes));
+                ++current_sync_received_files;
+                current_sync_received_bytes += received_bytes;
+                logger_.info("received file " + std::to_string(current_sync_received_files) +
+                             "/" + std::to_string(current_sync_total_files) +
+                             ": " + output_path.string() +
+                             " bytes=" + std::to_string(received_bytes) +
+                             " total_received=" + std::to_string(current_sync_received_bytes) +
+                             "/" + std::to_string(current_sync_total_bytes));
                 const std::string ack = "FILE_RECEIVED|" + relative_path + "|" + std::to_string(received_bytes) + "\n";
                 (void)send_all(fd, ack);
             } else {
-                logger_.info("file receive failed from " + peer.name + " @ " + peer.ip);
+                logger_.info("file receive failed from " + peer.name + " @ " + peer.ip + " path=" + output_path.string());
             }
             continue;
         }
 
         if (line.rfind("SYNC_END|", 0) == 0) {
             current_sync_is_dir = false;
+            logger_.info("sync completed with " + peer.name + " @ " + peer.ip +
+                         " received_files=" + std::to_string(current_sync_received_files) +
+                         "/" + std::to_string(current_sync_total_files) +
+                         " received_bytes=" + std::to_string(current_sync_received_bytes) +
+                         "/" + std::to_string(current_sync_total_bytes));
             current_sync_base.clear();
-            logger_.info("sync completed with " + peer.name + " @ " + peer.ip);
             continue;
         }
 
