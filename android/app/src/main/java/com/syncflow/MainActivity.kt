@@ -1,10 +1,15 @@
 package com.syncflow
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -13,6 +18,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editButton: Button
     private lateinit var deviceInfoButton: Button
     private lateinit var startButton: Button
+
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // no-op, permission result handled if needed
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,9 +47,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         startButton.setOnClickListener {
-            // Start foreground background service
-            val intent = Intent(this, SyncService::class.java)
-            intent.putExtra("config_path", configFile)
+            startSyncService(configFile)
+        }
+
+        // Request notification permission on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        // Auto-start the service when app opens
+        startSyncService(configFile)
+    }
+
+    private fun startSyncService(configFile: String) {
+        val intent = Intent(this, SyncService::class.java)
+        intent.putExtra("config_path", configFile)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
             startService(intent)
         }
     }
@@ -50,39 +79,5 @@ class MainActivity : AppCompatActivity() {
             f.writeText("{\n  \"file_sync\": {\n    \"enabled\": true,\n    \"source_path\": \"sync/\",\n    \"receive_dir\": \"received\",\n    \"device_name\": \"\"\n  },\n  \"security\": {\n    \"enabled\": true,\n    \"require_approval\": true\n  }\n}\n")
         }
         return f.absolutePath
-    }
-}
-package com.syncflow
-
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
-import android.widget.TextView
-import com.syncflow.databinding.ActivityMainBinding
-
-class MainActivity : AppCompatActivity() {
-
-    private lateinit var binding: ActivityMainBinding
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        // Example of a call to a native method
-        binding.sampleText.text = stringFromJNI()
-    }
-
-    /**
-     * A native method that is implemented by the 'syncflow' native library,
-     * which is packaged with this application.
-     */
-    external fun stringFromJNI(): String
-
-    companion object {
-        // Used to load the 'syncflow' library on application startup.
-        init {
-            System.loadLibrary("syncflow")
-        }
     }
 }
