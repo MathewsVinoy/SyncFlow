@@ -5,25 +5,38 @@
 
 #include <algorithm>
 #include <array>
-#include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <netinet/in.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <cstdint>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
 #include <vector>
-
 #include <iostream>
+
+// Cross-platform socket includes
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
+    #pragma comment(lib, "iphlpapi.lib")
+    typedef int socklen_t;
+    #define SHUT_RDWR SD_BOTH
+    #define EINPROGRESS WSAEINPROGRESS
+    #define EWOULDBLOCK WSAEWOULDBLOCK
+    #define EAGAIN WSAEAGAIN
+#else
+    #include <arpa/inet.h>
+    #include <fcntl.h>
+    #include <netinet/in.h>
+    #include <sys/select.h>
+    #include <sys/socket.h>
+    #include <unistd.h>
+#endif
 
 namespace syncflow::networking {
 
@@ -265,6 +278,13 @@ std::string sanitize_filename(const std::string& filename) {
 }
 
 std::filesystem::path executable_dir() {
+#ifdef _WIN32
+    char buffer[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, buffer, sizeof(buffer))) {
+        return std::filesystem::path(buffer).parent_path();
+    }
+    return std::filesystem::current_path();
+#else
     std::array<char, 4096> buffer{};
     const ssize_t len = ::readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
     if (len <= 0) {
@@ -273,14 +293,17 @@ std::filesystem::path executable_dir() {
 
     buffer[static_cast<std::size_t>(len)] = '\0';
     return std::filesystem::path(buffer.data()).parent_path();
+#endif
 }
 
 std::filesystem::path find_config_path() {
-    const std::array<std::filesystem::path, 4> candidates{
+    // Search in order of preference
+    std::vector<std::filesystem::path> candidates{
         std::filesystem::current_path() / "config.json",
         executable_dir() / "config.json",
         executable_dir().parent_path() / "config.json",
-        executable_dir().parent_path().parent_path() / "config.json"
+        executable_dir().parent_path().parent_path() / "config.json",
+        syncflow::platform::get_config_dir() / "config.json",
     };
 
     for (const auto& candidate : candidates) {
@@ -289,6 +312,7 @@ std::filesystem::path find_config_path() {
         }
     }
 
+    // Default to first location
     return candidates.front();
 }
 
