@@ -174,3 +174,4 @@ local.properties
 checkmate/
 .syncflow_tls/
 sync/
+config.json

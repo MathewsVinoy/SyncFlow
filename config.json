@@ -1,14 +1,15 @@
 {
-  "file_sync": {
-    "enabled": true,
-    "source_path": "sync/",
-    "receive_dir": "received",
-    "device_name": ""
-  },
-  "security": {
-    "enabled": true,
-    "cert_dir": ".syncflow/certs",
-    "require_approval": true,
-    "trusted_devices_file": ".syncflow/trusted_devices.txt"
-  }
+    "file_sync": {
+        "device_name": "",
+        "enabled": true,
+        "receive_dir": "received",
+        "source_path": "sync/"
+    },
+    "security": {
+        "cert_dir": ".syncflow/certs",
+        "enabled": true,
+        "require_approval": true,
+        "trusted_devices_file": ".syncflow/trusted_devices.txt"
+    }
 }
+
