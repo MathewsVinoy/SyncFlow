@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +20,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editButton: Button
     private lateinit var deviceInfoButton: Button
     private lateinit var startButton: Button
+    private val handler = Handler(Looper.getMainLooper())
+    private val refreshRunnable = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            handler.postDelayed(this, 1000)
+        }
+    }
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -37,6 +46,7 @@ class MainActivity : AppCompatActivity() {
 
         val configFile = getConfigFilePath()
         configPathView.text = configFile
+        refreshStatus()
 
         editButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -62,6 +72,16 @@ class MainActivity : AppCompatActivity() {
         startSyncService(configFile)
     }
 
+    override fun onResume() {
+        super.onResume()
+        handler.post(refreshRunnable)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(refreshRunnable)
+        super.onPause()
+    }
+
     private fun startSyncService(configFile: String) {
         val intent = Intent(this, SyncService::class.java)
         intent.putExtra("config_path", configFile)
@@ -79,5 +99,12 @@ class MainActivity : AppCompatActivity() {
             f.writeText("{\n  \"file_sync\": {\n    \"enabled\": true,\n    \"source_path\": \"sync/\",\n    \"receive_dir\": \"received\",\n    \"device_name\": \"\"\n  },\n  \"security\": {\n    \"enabled\": true,\n    \"require_approval\": true\n  }\n}\n")
         }
         return f.absolutePath
+    }
+
+    private fun refreshStatus() {
+        val serviceState = runCatching { NativeBridge.getStatus() }.getOrDefault("stopped")
+        val statusFile = filesDir.resolve("sync_status.json")
+        val peerState = if (statusFile.exists()) "Peers discovered" else "Waiting for peers"
+        deviceNameView.text = "Service: $serviceState | $peerState"
     }
 }

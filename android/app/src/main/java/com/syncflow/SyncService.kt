@@ -5,18 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import kotlin.concurrent.thread
 
 class SyncService : Service() {
     private var running = false
     private var configPath: String? = null
-
-    override fun onCreate() {
-        super.onCreate()
-    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         configPath = intent?.getStringExtra("config_path")
@@ -37,9 +35,18 @@ class SyncService : Service() {
             .setContentTitle("Syncflow")
             .setContentText("Background sync running")
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setOngoing(true)
             .build()
 
-        startForeground(101, notif)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                101,
+                notif,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(101, notif)
+        }
     }
 
     private fun startNativePeer() {
@@ -47,7 +54,6 @@ class SyncService : Service() {
         running = true
         val path = configPath ?: filesDir.resolve("config.json").absolutePath
 
-        // Call into JNI stub
         thread {
             NativeBridge.startPeer(path)
         }
