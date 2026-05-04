@@ -352,15 +352,6 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
         const auto relative = std::filesystem::relative(entry.path(), root_path);
         const std::string relative_text = relative.generic_string();
 
-        if (entry.is_directory()) {
-            std::ostringstream dir_line;
-            dir_line << "DIR_ENTRY|" << relative_text << '\n';
-            if (!send_all(fd, dir_line.str())) {
-                return false;
-            }
-            continue;
-        }
-
         if (!entry.is_regular_file()) {
             continue;
         }
@@ -663,7 +654,6 @@ void PeerNode::connect_to_peer(PeerInfo peer) {
 
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        logger_.info("failed to create TCP client socket");
         clear_pending_connect(peer);
         return;
     }
