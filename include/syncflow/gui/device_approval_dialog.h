@@ -2,6 +2,8 @@
 
 #include <QDialog>
 #include <QLabel>
+#include <QTextEdit>
+#include <QHBoxLayout>
 #include <QPushButton>
 #include <QString>
 
@@ -16,6 +18,10 @@ public:
 
     bool isApproved() const { return approved_; }
 
+    QString getDeviceName() const;
+    QString getDeviceIP() const;
+    QString getFingerprint() const;
+
 private slots:
     void onApproveClicked();
     void onDenyClicked();
@@ -23,14 +29,18 @@ private slots:
 
 private:
     void setupUI();
+    QHBoxLayout* createLabelValueLayout(const QString& label_text, QWidget* value_widget);
 
     QString device_name_;
     QString fingerprint_;
-    QString ip_address_;
+    QString device_ip_;
     bool approved_;
 
     QLabel* info_label_;
     QLabel* fingerprint_label_;
+    QLabel* device_name_display_;
+    QLabel* device_ip_display_;
+    QTextEdit* fingerprint_display_;
     QPushButton* approve_button_;
     QPushButton* deny_button_;
     QPushButton* copy_button_;

@@ -213,18 +213,18 @@ void MainWindow::onDeviceDisconnected(const QString& device_name) {
     }
 }
 
-void MainWindow::onSyncStarted(const QString& device_name) {
-    current_sync_label_->setText(QString("Syncing with: %1").arg(device_name));
+void MainWindow::onSyncStarted() {
+    current_sync_label_->setText("Syncing...");
     sync_progress_->setValue(0);
 }
 
-void MainWindow::onSyncProgress(const QString& file_name, int progress) {
-    current_sync_label_->setText(QString("Transferring: %1 (%2%)").arg(file_name).arg(progress));
+void MainWindow::onSyncProgress(int progress) {
+    current_sync_label_->setText(QString("Progress: %1%").arg(progress));
     sync_progress_->setValue(progress);
 }
 
-void MainWindow::onSyncCompleted(const QString& device_name) {
-    current_sync_label_->setText(QString("Sync completed with: %1").arg(device_name));
+void MainWindow::onSyncCompleted() {
+    current_sync_label_->setText("Sync completed");
     sync_progress_->setValue(100);
 }
 
@@ -251,7 +251,7 @@ void MainWindow::onApproveClicked() {
     }
 
     QString device_name = item->data(Qt::UserRole).toString();
-    DeviceApprovalDialog dialog(device_name, "fingerprint_hash_here", "0.0.0.0", this);
+    DeviceApprovalDialog dialog(device_name, "0.0.0.0", "fingerprint_hash_here", this);
     dialog.exec();
 }
 
@@ -293,9 +293,14 @@ void MainWindow::onRefreshClicked() {
 void MainWindow::startSyncWorker() {
     if (!worker_thread_) return;
 
-    QMetaObject::invokeMethod(sync_worker_.get(), [this]() {
-        sync_worker_->start(device_name_);
-    });
+    // Ensure device name is set on worker then start it in the worker thread
+    QMetaObject::invokeMethod(sync_worker_.get(), "setDeviceName", Qt::QueuedConnection,
+                              Q_ARG(QString, device_name_));
+    QMetaObject::invokeMethod(sync_worker_.get(), "setSyncPaths", Qt::QueuedConnection,
+                              Q_ARG(QString, QString()), Q_ARG(QString, QString()));
+    QMetaObject::invokeMethod(sync_worker_.get(), "setSecurityEnabled", Qt::QueuedConnection,
+                              Q_ARG(bool, true));
+    QMetaObject::invokeMethod(sync_worker_.get(), "start", Qt::QueuedConnection);
 
     if (!worker_thread_->isRunning()) {
         worker_thread_->start();
@@ -305,7 +310,7 @@ void MainWindow::startSyncWorker() {
 void MainWindow::stopSyncWorker() {
     if (!worker_thread_) return;
 
-    QMetaObject::invokeMethod(sync_worker_.get(), &SyncWorker::stop);
+    QMetaObject::invokeMethod(sync_worker_.get(), "stop", Qt::QueuedConnection);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
