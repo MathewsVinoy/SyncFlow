@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/etDeviceName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Device name" />
+
+        <EditText
+            android:id="@+id/etSourcePath"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Source path"
+            android:layout_marginTop="8dp" />
+
+        <EditText
+            android:id="@+id/etReceiveDir"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Receive directory"
+            android:layout_marginTop="8dp" />
+
+        <CheckBox
+            android:id="@+id/cbFileSync"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Enable file sync"
+            android:layout_marginTop="8dp" />
+
+        <CheckBox
+            android:id="@+id/cbSecurity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Enable security"
+            android:layout_marginTop="8dp" />
+
+        <CheckBox
+            android:id="@+id/cbRequireApproval"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Require device approval"
+            android:layout_marginTop="4dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="16dp">
+
+            <Button
+                android:id="@+id/btnSave"
+                android:layout_weight="1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="Save" />
+
+            <Button
+                android:id="@+id/btnCancel"
+                android:layout_weight="1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="Cancel"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
