@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <ctime>
+#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -146,7 +148,25 @@ std::int64_t system_time_to_unix_ms(const std::chrono::system_clock::time_point&
     return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
 }
 
-void append_transfer_log(const std::filesystem::path& base_path, const std::string& message) {
+std::string format_detailed_time(const std::chrono::system_clock::time_point& tp) {
+    const auto ms_tp = std::chrono::time_point_cast<std::chrono::milliseconds>(tp);
+    const auto ms = static_cast<int>(ms_tp.time_since_epoch().count() % 1000);
+    const std::time_t time = std::chrono::system_clock::to_time_t(tp);
+
+    std::tm tm{};
+    if (const std::tm* local = std::localtime(&time)) {
+        tm = *local;
+    }
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.'
+        << std::setw(3) << std::setfill('0') << ms;
+    return oss.str();
+}
+
+void append_transfer_log(const std::filesystem::path& base_path,
+                         const std::string& file_name,
+                         std::int64_t modified_time_ms) {
     std::error_code ec;
     const auto log_dir = hidden_sync_folder(base_path);
     std::filesystem::create_directories(log_dir, ec);
@@ -159,7 +179,10 @@ void append_transfer_log(const std::filesystem::path& base_path, const std::stri
         return;
     }
 
-    log << system_time_to_unix_ms(std::chrono::system_clock::now()) << '|' << message << '\n';
+    const auto event_time = std::chrono::system_clock::now();
+    const auto file_time = unix_ms_to_system_time(modified_time_ms);
+
+    log << format_detailed_time(event_time) << '|' << file_name << '|' << format_detailed_time(file_time) << '\n';
 }
 
 std::string basename_for_path(const std::filesystem::path& path) {
@@ -382,9 +405,8 @@ bool PeerNode::send_file_payload(int fd, const std::filesystem::path& path, std:
     std::ostringstream end;
     end << "SYNC_END|" << filename << "|FILE\n";
     append_transfer_log(path.has_parent_path() ? path.parent_path() : std::filesystem::current_path(),
-                        "sent file " + path.string() +
-                        " bytes=" + std::to_string(bytes_sent) +
-                        " mtime_ms=" + std::to_string(sender_mtime_ms));
+                        filename,
+                        sender_mtime_ms);
     return send_all(fd, end.str());
 }
 
@@ -467,10 +489,7 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
                      ": " + relative_text + " bytes=" + std::to_string(file_bytes) +
                      " mtime_ms=" + std::to_string(sender_mtime_ms) +
                      " total_sent=" + std::to_string(bytes_sent));
-        append_transfer_log(root_path, "sent file " + relative_text +
-                                       " bytes=" + std::to_string(file_bytes) +
-                                       " mtime_ms=" + std::to_string(sender_mtime_ms) +
-                                       " progress=" + std::to_string(sent_files) + "/" + std::to_string(total_files));
+        append_transfer_log(root_path, relative_text, sender_mtime_ms);
 
         std::ostringstream file_done;
         file_done << "FILE_DONE|" << relative_text << '|' << file_bytes << '\n';
@@ -484,8 +503,6 @@ bool PeerNode::send_directory_payload(int fd, const std::filesystem::path& root_
     logger_.info("directory sync complete: source=" + root_path.string() +
                  " files_sent=" + std::to_string(sent_files) +
                  " bytes_sent=" + std::to_string(bytes_sent));
-    append_transfer_log(root_path, "directory sync complete files_sent=" + std::to_string(sent_files) +
-                                   " bytes_sent=" + std::to_string(bytes_sent));
     return send_all(fd, end.str());
 }
 
@@ -667,19 +684,18 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
                                      " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
                                      " local_mtime_ms=" + std::to_string(local_mtime_ms) +
                                      " action=updated");
-                        append_transfer_log(file_sync_config_.receive_dir, "updated " + output_path.string() +
-                                                           " bytes=" + std::to_string(received_bytes) +
-                                                           " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
-                                                           " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                        append_transfer_log(file_sync_config_.receive_dir,
+                                            name,
+                                            sender_mtime_ms);
                     } else {
                         logger_.info("file received but skipped newer local copy from " + peer.name + " @ " + peer.ip +
                                      " path=" + output_path.string() +
                                      " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
                                      " local_mtime_ms=" + std::to_string(local_mtime_ms) +
                                      " action=skipped_newer_local");
-                        append_transfer_log(file_sync_config_.receive_dir, "skipped " + output_path.string() +
-                                                           " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
-                                                           " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                        append_transfer_log(file_sync_config_.receive_dir,
+                                            name,
+                                            sender_mtime_ms);
                     }
 
                     const std::string ack = "FILE_RECEIVED|" + name + "|" + std::to_string(received_bytes) + "\n";
@@ -795,10 +811,9 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
                                  " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
                                  " local_mtime_ms=" + std::to_string(local_mtime_ms) +
                                  " action=updated");
-                    append_transfer_log(file_sync_config_.receive_dir, "updated " + output_path.string() +
-                                                       " bytes=" + std::to_string(received_bytes) +
-                                                       " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
-                                                       " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                    append_transfer_log(file_sync_config_.receive_dir,
+                                        relative_path,
+                                        sender_mtime_ms);
                 } else {
                     logger_.info("received file " + std::to_string(current_sync_received_files) +
                                  "/" + std::to_string(current_sync_total_files) +
@@ -807,10 +822,9 @@ void PeerNode::handle_peer_connection(int fd, PeerInfo peer, const std::string& 
                                  " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
                                  " local_mtime_ms=" + std::to_string(local_mtime_ms) +
                                  " action=skipped_newer_local");
-                    append_transfer_log(file_sync_config_.receive_dir, "skipped " + output_path.string() +
-                                                       " bytes=" + std::to_string(received_bytes) +
-                                                       " sender_mtime_ms=" + std::to_string(sender_mtime_ms) +
-                                                       " local_mtime_ms=" + std::to_string(local_mtime_ms));
+                    append_transfer_log(file_sync_config_.receive_dir,
+                                        relative_path,
+                                        sender_mtime_ms);
                 }
                 const std::string ack = "FILE_RECEIVED|" + relative_path + "|" + std::to_string(received_bytes) + "\n";
                 (void)send_all(fd, ack);
