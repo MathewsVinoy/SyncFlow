@@ -20,7 +20,7 @@
 
 namespace syncflow::gui {
 
-SyncflowMainWindow::SyncflowMainWindow(QWidget* parent)
+MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
       worker_thread_(nullptr),
       is_running_(false) {
@@ -43,12 +43,12 @@ SyncflowMainWindow::SyncflowMainWindow(QWidget* parent)
     sync_worker_->moveToThread(worker_thread_);
 
     connect(worker_thread_, &QThread::finished, sync_worker_.get(), &QObject::deleteLater);
-    connect(this, &SyncflowMainWindow::destroyed, worker_thread_, &QThread::quit);
+    connect(this, &MainWindow::destroyed, worker_thread_, &QThread::quit);
 
     connectSignals();
 }
 
-SyncflowMainWindow::~SyncflowMainWindow() {
+MainWindow::~MainWindow() {
     stopSyncWorker();
     if (worker_thread_) {
         worker_thread_->quit();
@@ -56,7 +56,7 @@ SyncflowMainWindow::~SyncflowMainWindow() {
     }
 }
 
-void SyncflowMainWindow::setupUI() {
+void MainWindow::setupUI() {
     QWidget* central_widget = new QWidget(this);
     setCentralWidget(central_widget);
 
@@ -130,7 +130,7 @@ void SyncflowMainWindow::setupUI() {
     central_widget->setLayout(main_layout);
 }
 
-void SyncflowMainWindow::createMenuBar() {
+void MainWindow::createMenuBar() {
     QMenuBar* menu_bar = new QMenuBar(this);
     setMenuBar(menu_bar);
 
@@ -138,7 +138,7 @@ void SyncflowMainWindow::createMenuBar() {
     QMenu* file_menu = menu_bar->addMenu("&File");
     
     QAction* settings_action = file_menu->addAction("&Settings");
-    connect(settings_action, &QAction::triggered, this, &SyncflowMainWindow::onSettingsClicked);
+    connect(settings_action, &QAction::triggered, this, &MainWindow::onSettingsClicked);
 
     file_menu->addSeparator();
 
@@ -156,44 +156,44 @@ void SyncflowMainWindow::createMenuBar() {
     });
 }
 
-void SyncflowMainWindow::connectSignals() {
+void MainWindow::connectSignals() {
     if (!sync_worker_) return;
 
     connect(sync_worker_.get(), &SyncWorker::deviceDiscovered,
-            this, &SyncflowMainWindow::onDeviceDiscovered);
+            this, &MainWindow::onDeviceDiscovered);
     connect(sync_worker_.get(), &SyncWorker::deviceConnected,
-            this, &SyncflowMainWindow::onDeviceConnected);
+            this, &MainWindow::onDeviceConnected);
     connect(sync_worker_.get(), &SyncWorker::deviceDisconnected,
-            this, &SyncflowMainWindow::onDeviceDisconnected);
+            this, &MainWindow::onDeviceDisconnected);
     connect(sync_worker_.get(), &SyncWorker::syncStarted,
-            this, &SyncflowMainWindow::onSyncStarted);
+            this, &MainWindow::onSyncStarted);
     connect(sync_worker_.get(), &SyncWorker::syncProgress,
-            this, &SyncflowMainWindow::onSyncProgress);
+            this, &MainWindow::onSyncProgress);
     connect(sync_worker_.get(), &SyncWorker::syncCompleted,
-            this, &SyncflowMainWindow::onSyncCompleted);
+            this, &MainWindow::onSyncCompleted);
     connect(sync_worker_.get(), &SyncWorker::syncError,
-            this, &SyncflowMainWindow::onSyncError);
+            this, &MainWindow::onSyncError);
 
     connect(start_stop_button_, &QPushButton::clicked,
-            this, &SyncflowMainWindow::onStartStopClicked);
+            this, &MainWindow::onStartStopClicked);
     connect(settings_button_, &QPushButton::clicked,
-            this, &SyncflowMainWindow::onSettingsClicked);
+            this, &MainWindow::onSettingsClicked);
     connect(approve_button_, &QPushButton::clicked,
-            this, &SyncflowMainWindow::onApproveClicked);
+            this, &MainWindow::onApproveClicked);
     connect(remove_button_, &QPushButton::clicked,
-            this, &SyncflowMainWindow::onRemoveClicked);
+            this, &MainWindow::onRemoveClicked);
     connect(refresh_button_, &QPushButton::clicked,
-            this, &SyncflowMainWindow::onRefreshClicked);
+            this, &MainWindow::onRefreshClicked);
 }
 
-void SyncflowMainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip) {
+void MainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip) {
     QListWidgetItem* item = new QListWidgetItem(
         QString("%1 (%2)").arg(device_name, device_ip), device_list_widget_);
     item->setData(Qt::UserRole, device_name);
     device_list_widget_->addItem(item);
 }
 
-void SyncflowMainWindow::onDeviceConnected(const QString& device_name) {
+void MainWindow::onDeviceConnected(const QString& device_name) {
     for (int i = 0; i < device_list_widget_->count(); ++i) {
         QListWidgetItem* item = device_list_widget_->item(i);
         if (item->data(Qt::UserRole).toString() == device_name) {
@@ -203,7 +203,7 @@ void SyncflowMainWindow::onDeviceConnected(const QString& device_name) {
     }
 }
 
-void SyncflowMainWindow::onDeviceDisconnected(const QString& device_name) {
+void MainWindow::onDeviceDisconnected(const QString& device_name) {
     for (int i = 0; i < device_list_widget_->count(); ++i) {
         QListWidgetItem* item = device_list_widget_->item(i);
         if (item->data(Qt::UserRole).toString() == device_name) {
@@ -213,28 +213,28 @@ void SyncflowMainWindow::onDeviceDisconnected(const QString& device_name) {
     }
 }
 
-void SyncflowMainWindow::onSyncStarted(const QString& device_name) {
+void MainWindow::onSyncStarted(const QString& device_name) {
     current_sync_label_->setText(QString("Syncing with: %1").arg(device_name));
     sync_progress_->setValue(0);
 }
 
-void SyncflowMainWindow::onSyncProgress(const QString& file_name, int progress) {
+void MainWindow::onSyncProgress(const QString& file_name, int progress) {
     current_sync_label_->setText(QString("Transferring: %1 (%2%)").arg(file_name).arg(progress));
     sync_progress_->setValue(progress);
 }
 
-void SyncflowMainWindow::onSyncCompleted(const QString& device_name) {
+void MainWindow::onSyncCompleted(const QString& device_name) {
     current_sync_label_->setText(QString("Sync completed with: %1").arg(device_name));
     sync_progress_->setValue(100);
 }
 
-void SyncflowMainWindow::onSyncError(const QString& error_message) {
+void MainWindow::onSyncError(const QString& error_message) {
     QMessageBox::warning(this, "Sync Error", error_message);
     current_sync_label_->setText("Error during sync");
     sync_progress_->setValue(0);
 }
 
-void SyncflowMainWindow::onSettingsClicked() {
+void MainWindow::onSettingsClicked() {
     SettingsDialog dialog(this);
     dialog.setDeviceName(device_name_);
     if (dialog.exec() == QDialog::Accepted) {
@@ -243,7 +243,7 @@ void SyncflowMainWindow::onSettingsClicked() {
     }
 }
 
-void SyncflowMainWindow::onApproveClicked() {
+void MainWindow::onApproveClicked() {
     QListWidgetItem* item = device_list_widget_->currentItem();
     if (!item) {
         QMessageBox::information(this, "No Selection", "Please select a device to approve.");
@@ -255,7 +255,7 @@ void SyncflowMainWindow::onApproveClicked() {
     dialog.exec();
 }
 
-void SyncflowMainWindow::onRemoveClicked() {
+void MainWindow::onRemoveClicked() {
     QListWidgetItem* item = device_list_widget_->currentItem();
     if (!item) {
         QMessageBox::information(this, "No Selection", "Please select a device to remove.");
@@ -270,7 +270,7 @@ void SyncflowMainWindow::onRemoveClicked() {
     }
 }
 
-void SyncflowMainWindow::onStartStopClicked() {
+void MainWindow::onStartStopClicked() {
     if (!is_running_) {
         startSyncWorker();
         start_stop_button_->setText("Stop Sync");
@@ -284,13 +284,13 @@ void SyncflowMainWindow::onStartStopClicked() {
     }
 }
 
-void SyncflowMainWindow::onRefreshClicked() {
+void MainWindow::onRefreshClicked() {
     device_list_widget_->clear();
     sync_progress_->setValue(0);
     current_sync_label_->setText("Ready to sync");
 }
 
-void SyncflowMainWindow::startSyncWorker() {
+void MainWindow::startSyncWorker() {
     if (!worker_thread_) return;
 
     QMetaObject::invokeMethod(sync_worker_.get(), [this]() {
@@ -302,24 +302,24 @@ void SyncflowMainWindow::startSyncWorker() {
     }
 }
 
-void SyncflowMainWindow::stopSyncWorker() {
+void MainWindow::stopSyncWorker() {
     if (!worker_thread_) return;
 
     QMetaObject::invokeMethod(sync_worker_.get(), &SyncWorker::stop);
 }
 
-void SyncflowMainWindow::closeEvent(QCloseEvent* event) {
+void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
     stopSyncWorker();
     QMainWindow::closeEvent(event);
 }
 
-void SyncflowMainWindow::loadSettings() {
+void MainWindow::loadSettings() {
     QSettings settings("Syncflow", "Syncflow");
     device_name_ = settings.value("device_name", device_name_).toString();
 }
 
-void SyncflowMainWindow::saveSettings() {
+void MainWindow::saveSettings() {
     QSettings settings("Syncflow", "Syncflow");
     settings.setValue("device_name", device_name_);
     settings.sync();

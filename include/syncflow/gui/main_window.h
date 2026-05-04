@@ -16,9 +16,9 @@ class SyncflowMainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit SyncflowMainWindow(QWidget* parent = nullptr);
-    ~SyncflowMainWindow() override;
 
+    explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
 protected:
     void closeEvent(QCloseEvent* event) override;
 
