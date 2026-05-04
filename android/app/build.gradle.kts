@@ -43,16 +43,9 @@ android {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
-            // Pass a default ABI list to CMake (optional)
-            arguments += listOf("-DANDROID_STL=c++_shared")
         }
     }
-    packagingOptions {
-        // avoid duplicate libs if any
-        jniLibs {
-            keepFirstMatching = true
-        }
-    }
+    // packaging options left default
     buildFeatures {
         viewBinding = true
     }
