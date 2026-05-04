@@ -33,17 +33,20 @@ Use CMake to build the `syncflow_peer` executable.
 ### Prerequisites
 
 **Linux/macOS:**
+
 ```bash
 sudo apt-get install build-essential cmake libssl-dev  # Ubuntu/Debian
 brew install cmake openssl                             # macOS
 ```
 
 **Windows:**
+
 - Install [Visual Studio 2019+](https://visualstudio.microsoft.com/downloads/) with C++ tools
 - Install [CMake](https://cmake.org/download/) (3.16+)
 - OpenSSL is automatically found/linked
 
 **macOS (Homebrew):**
+
 ```bash
 brew install cmake openssl
 ```
@@ -51,24 +54,28 @@ brew install cmake openssl
 ### Build Steps
 
 **Linux/macOS:**
+
 ```bash
 cmake -S . -B build
 cmake --build build -j4
 ```
 
 **Windows (Command Prompt):**
+
 ```cmd
 cmake -S . -B build -G "Visual Studio 17 2022"
 cmake --build build -j4 --config Release
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022"
 cmake --build build -j4 --config Release
 ```
 
 **Termux (Android):**
+
 ```bash
 pkg install cmake openssl-dev clang
 cmake -S . -B build
@@ -83,6 +90,7 @@ cmake --build build -j4
 ```
 
 On Windows with custom device name:
+
 ```cmd
 cmake -DDEVICE_NAME="my-windows-pc" -S . -B build -G "Visual Studio 17 2022"
 cmake --build build -j4 --config Release
@@ -135,6 +143,7 @@ Run the executable on all devices on the same network.
 ### macOS (Homebrew)
 
 If built with Homebrew's OpenSSL:
+
 ```bash
 # May need to set library path
 export DYLD_LIBRARY_PATH=$(brew --prefix)/opt/openssl/lib:$DYLD_LIBRARY_PATH
@@ -201,6 +210,7 @@ Commands:
 Use `--detach` to run the peer node as a background process:
 
 **Linux/macOS:**
+
 ```bash
 # Start in background daemon
 ./build/syncflow_peer --detach
@@ -216,6 +226,7 @@ pkill -f syncflow_peer
 ```
 
 **Windows:**
+
 ```cmd
 # Runs in background (new console window)
 .\build\Release\syncflow_peer.exe --device my-windows-pc --detach
@@ -258,6 +269,7 @@ The default config uses [sync/](sync/) as a demo folder tree.
 ### Linux
 
 Configuration files are stored in:
+
 ```
 ~/.config/syncflow/
 ├── config.json
@@ -272,6 +284,7 @@ Or use `XDG_CONFIG_HOME` environment variable to change the location.
 ### macOS
 
 Configuration files are stored in:
+
 ```
 ~/Library/Application Support/syncflow/
 ├── config.json
@@ -282,6 +295,7 @@ Configuration files are stored in:
 ```
 
 Caches (if needed):
+
 ```
 ~/Library/Caches/syncflow/
 ```
@@ -289,6 +303,7 @@ Caches (if needed):
 ### Windows
 
 Configuration files are stored in:
+
 ```
 %APPDATA%\syncflow\
 ├── config.json
@@ -299,11 +314,13 @@ Configuration files are stored in:
 ```
 
 Typical path (example):
+
 ```
 C:\Users\YourUsername\AppData\Roaming\syncflow\
 ```
 
 Local app data (caches):
+
 ```
 %LOCALAPPDATA%\syncflow\
 ```
@@ -311,6 +328,7 @@ Local app data (caches):
 ### Android/Termux
 
 Configuration files are stored in:
+
 ```
 $HOME/.config/syncflow/
 ├── config.json
@@ -321,6 +339,7 @@ $HOME/.config/syncflow/
 ```
 
 Or in Termux storage:
+
 ```
 /data/data/com.termux/files/home/.config/syncflow/
 ```
