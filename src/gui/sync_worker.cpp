@@ -4,6 +4,7 @@
 #include "syncflow/networking/peer_node.h"
 
 #include <thread>
+#include "syncflow/platform/system_info.h"
 #include <chrono>
 #include <QThread>
 
@@ -28,7 +29,11 @@ void SyncWorker::start() {
     // Initialize peer node if needed
     if (!peer_node_) {
         try {
-            peer_node_ = std::make_unique<networking::PeerNode>("6789");
+            // Use the device_name if set, otherwise get hostname
+            std::string peer_device_name = device_name_.isEmpty() ? 
+                syncflow::platform::get_hostname() : 
+                device_name_.toStdString();
+            peer_node_ = std::make_unique<networking::PeerNode>(peer_device_name);
             emit statusChanged("Peer node initialized");
         } catch (const std::exception& e) {
             emit syncError(QString("Failed to initialize peer node: %1").arg(e.what()));
@@ -102,7 +107,9 @@ void SyncWorker::performDiscovery() {
 
             if (discovery_count % 5 == 0) {
                 // Emit a mock discovered device every 5 iterations
+                // Use Qt::AutoConnection to ensure proper thread-safe signal delivery
                 emit deviceDiscovered("device-1", "192.168.1.100", "00:11:22:33:44:55");
+                emit deviceConnected("device-1");
                 emit statusChanged("Device discovered: device-1 (192.168.1.100)");
             }
 
@@ -111,6 +118,10 @@ void SyncWorker::performDiscovery() {
                 static int progress = 0;
                 progress = (progress + 10) % 100;
                 emit syncProgress(progress);
+            }
+
+            if (discovery_count > 100) {
+                discovery_count = 0;  // Reset counter
             }
 
             // Sleep for a bit to avoid busy-waiting

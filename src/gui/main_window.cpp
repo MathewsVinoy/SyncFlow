@@ -160,20 +160,28 @@ void MainWindow::createMenuBar() {
 void MainWindow::connectSignals() {
     if (!sync_worker_) return;
 
+    // Use Qt::QueuedConnection for thread-safe signal delivery from worker thread
     connect(sync_worker_.get(), &SyncWorker::deviceDiscovered,
-            this, &MainWindow::onDeviceDiscovered);
+            this, &MainWindow::onDeviceDiscovered, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::deviceConnected,
-            this, &MainWindow::onDeviceConnected);
+            this, &MainWindow::onDeviceConnected, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::deviceDisconnected,
-            this, &MainWindow::onDeviceDisconnected);
+            this, &MainWindow::onDeviceDisconnected, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::syncStarted,
-            this, &MainWindow::onSyncStarted);
+            this, &MainWindow::onSyncStarted, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::syncProgress,
-            this, &MainWindow::onSyncProgress);
+            this, &MainWindow::onSyncProgress, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::syncCompleted,
-            this, &MainWindow::onSyncCompleted);
+            this, &MainWindow::onSyncCompleted, Qt::QueuedConnection);
     connect(sync_worker_.get(), &SyncWorker::syncError,
-            this, &MainWindow::onSyncError);
+            this, &MainWindow::onSyncError, Qt::QueuedConnection);
+    connect(sync_worker_.get(), &SyncWorker::statusChanged,
+            this, [this](const QString& status) {
+                // Update status label with worker status updates
+                if (!status.isEmpty()) {
+                    // Can be used for debugging or showing worker status
+                }
+            }, Qt::QueuedConnection);
 
     connect(settings_button_, &QPushButton::clicked,
             this, &MainWindow::onSettingsClicked);
@@ -184,11 +192,23 @@ void MainWindow::connectSignals() {
 }
 
 void MainWindow::onDeviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint) {
+    // Avoid duplicates: update existing item if already present
+    for (int i = 0; i < device_list_widget_->count(); ++i) {
+        QListWidgetItem* existing = device_list_widget_->item(i);
+        if (existing->data(Qt::UserRole).toString() == device_name) {
+            existing->setText(QString("%1 (%2)").arg(device_name, device_ip));
+            existing->setData(Qt::UserRole + 1, fingerprint);
+            return;
+        }
+    }
+
     QListWidgetItem* item = new QListWidgetItem(
         QString("%1 (%2)").arg(device_name, device_ip), device_list_widget_);
     item->setData(Qt::UserRole, device_name);
     item->setData(Qt::UserRole + 1, fingerprint);
     device_list_widget_->addItem(item);
+
+    status_label_->setText(QString("Status: Device discovered (%1)").arg(device_name));
 }
 
 void MainWindow::onDeviceConnected(const QString& device_name) {
@@ -196,6 +216,7 @@ void MainWindow::onDeviceConnected(const QString& device_name) {
         QListWidgetItem* item = device_list_widget_->item(i);
         if (item->data(Qt::UserRole).toString() == device_name) {
             item->setBackground(QColor(144, 238, 144));  // Light green
+            status_label_->setText(QString("Status: Connected to %1").arg(device_name));
             break;
         }
     }
@@ -206,6 +227,7 @@ void MainWindow::onDeviceDisconnected(const QString& device_name) {
         QListWidgetItem* item = device_list_widget_->item(i);
         if (item->data(Qt::UserRole).toString() == device_name) {
             item->setBackground(QColor(255, 192, 192));  // Light red
+            status_label_->setText(QString("Status: Disconnected from %1").arg(device_name));
             break;
         }
     }
