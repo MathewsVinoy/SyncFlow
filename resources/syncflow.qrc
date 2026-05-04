@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RCC>
+    <qresource prefix="/icons">
+        <!-- Application icon would go here -->
+        <!-- <file>app_icon.png</file> -->
+    </qresource>
+    <qresource prefix="/styles">
+        <!-- Custom stylesheets would go here -->
+        <!-- <file>dark.qss</file> -->
+    </qresource>
+</RCC>

@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.16)
 
 project(syncflow_peer_demo LANGUAGES CXX)
 
+# Enable Qt meta-object compiler (MOC)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
 # Allow embedding a device name at build time. If not provided, defaults to project name.
 if(NOT DEFINED DEVICE_NAME)
     set(DEVICE_NAME "${PROJECT_NAME}" CACHE STRING "Device name embedded into the build")
@@ -66,6 +71,15 @@ target_compile_options(syncflow_core PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(Qt5 COMPONENTS Core Gui Widgets Network QUIET)
+
+# Fallback to Qt6 if Qt5 not found
+if(NOT Qt5_FOUND)
+    find_package(Qt6 COMPONENTS Core Gui Widgets Network REQUIRED)
+    set(QT_LIBRARIES Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+else()
+    set(QT_LIBRARIES Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network)
+endif()
 
 if(PLATFORM_WINDOWS)
     target_link_libraries(syncflow_core PUBLIC Threads::Threads OpenSSL::Crypto OpenSSL::SSL ${EXTRA_LIBS})
@@ -78,3 +92,29 @@ target_link_libraries(syncflow_peer PRIVATE syncflow_core)
 
 target_include_directories(syncflow_peer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(syncflow_peer PRIVATE -Wall -Wextra -Wpedantic)
+
+# Build GUI target if Qt is found
+add_executable(syncflow_gui
+    src/gui/gui_main.cpp
+    src/gui/main_window.cpp
+    src/gui/settings_dialog.cpp
+    src/gui/device_approval_dialog.cpp
+    src/gui/sync_worker.cpp
+    resources/syncflow.qrc
+)
+
+target_include_directories(syncflow_gui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(syncflow_gui PRIVATE
+    syncflow_core
+    ${QT_LIBRARIES}
+)
+
+target_compile_options(syncflow_gui PRIVATE -Wall -Wextra -Wpedantic)
+
+if(PLATFORM_WINDOWS)
+    # Set GUI subsystem for Windows to hide console window
+    set_target_properties(syncflow_gui PROPERTIES WIN32_EXECUTABLE ON)
+endif()
