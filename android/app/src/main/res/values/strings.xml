@@ -1,7 +1,3 @@
 <resources>
     <string name="app_name">syncflow</string>
-    <string name="edit_config">Edit Config</string>
-    <string name="device_info">Device Info</string>
-    <string name="start">Start</string>
-    <string name="stop">Stop</string>
 </resources>
