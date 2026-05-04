@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QComboBox>
+#include <QString>
 
 namespace syncflow {
 namespace gui {
@@ -14,6 +15,12 @@ class SettingsDialog : public QDialog {
 
 public:
     explicit SettingsDialog(QWidget* parent = nullptr);
+
+    void setConfigPath(const QString& config_path);
+    QString configPath() const;
+
+    bool loadConfig();
+    bool saveConfig();
 
     QString getDeviceName() const;
     void setDeviceName(const QString& name);
@@ -42,8 +49,9 @@ private slots:
 
 private:
     void setupUI();
-    void loadSettings();
+    void loadDefaults();
 
+    QString config_path_;
     QLineEdit* device_name_edit_;
     QLineEdit* source_path_edit_;
     QLineEdit* receive_dir_edit_;

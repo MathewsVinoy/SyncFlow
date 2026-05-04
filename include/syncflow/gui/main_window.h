@@ -1,18 +1,14 @@
 #pragma once
 
 #include <QMainWindow>
-#include <QListWidget>
 #include <QLabel>
 #include <QPushButton>
-#include <QProgressBar>
-#include <QThread>
-#include <QTimer>
-#include <memory>
+#include <QString>
 
 namespace syncflow {
 namespace gui {
 
-class SyncWorker;
+class SettingsDialog;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -25,17 +21,8 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void onDeviceDiscovered(const QString& device_name, const QString& device_ip, const QString& fingerprint);
-    void onDeviceConnected(const QString& device_name);
-    void onDeviceDisconnected(const QString& device_name);
-    void onSyncStarted();
-    void onSyncProgress(int progress);
-    void onSyncCompleted();
-    void onSyncError(const QString& error_message);
     void onSettingsClicked();
-    void onApproveClicked();
-    void onRemoveClicked();
-    void onPeriodicCheck();  // Called every 10 seconds to check SSL and connections
+    void onReloadClicked();
 
 private:
     void setupUI();
@@ -43,26 +30,34 @@ private:
     void connectSignals();
     void loadSettings();
     void saveSettings();
-    void updateDeviceList();
-    void startSyncWorker();
-    void checkSSLCertificates();
+    void refreshConfigView();
+    void launchBackgroundPeer();
+    QString findPeerExecutablePath() const;
+
+    struct ConfigView {
+        bool file_sync_enabled{true};
+        bool security_enabled{true};
+        bool require_approval{true};
+        QString device_name;
+        QString source_path;
+        QString receive_dir;
+    };
 
     // UI Components
-    QListWidget* device_list_widget_;
-    QLabel* status_label_;
+    QLabel* config_path_label_;
     QLabel* device_name_label_;
-    QLabel* ip_address_label_;
-    QLabel* sync_status_label_;
+    QLabel* file_sync_label_;
+    QLabel* source_path_label_;
+    QLabel* receive_dir_label_;
+    QLabel* security_label_;
+    QLabel* approval_label_;
+    QLabel* background_status_label_;
     QPushButton* settings_button_;
-    QPushButton* approve_button_;
-    QPushButton* remove_button_;
-
-    // Backend
-    std::unique_ptr<SyncWorker> sync_worker_;
-    QThread* worker_thread_;
-    QTimer* periodic_timer_;  // 10-second timer for SSL and connection checks
+    QPushButton* reload_button_;
     
     // State
+    QString config_path_;
+    ConfigView config_;
     QString device_name_;
     QString local_ip_;
 };

@@ -7,6 +7,15 @@
 #include <QSettings>
 #include <QGroupBox>
 #include <QFormLayout>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMessageBox>
+
+#include <filesystem>
+
+#include "syncflow/file_sync/file_sync.h"
+#include "syncflow/platform/system_info.h"
 
 namespace syncflow::gui {
 
@@ -16,7 +25,15 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     setWindowTitle("Settings");
     setMinimumWidth(500);
     setupUI();
-    loadSettings();
+    loadDefaults();
+}
+
+void SettingsDialog::setConfigPath(const QString& config_path) {
+    config_path_ = config_path;
+}
+
+QString SettingsDialog::configPath() const {
+    return config_path_;
 }
 
 void SettingsDialog::setupUI() {
@@ -96,15 +113,90 @@ void SettingsDialog::setupUI() {
             this, &SettingsDialog::onResetClicked);
 }
 
-void SettingsDialog::loadSettings() {
-    QSettings settings("Syncflow", "Syncflow");
+void SettingsDialog::loadDefaults() {
+    device_name_edit_->setText(QString::fromStdString(syncflow::platform::get_hostname()));
+    source_path_edit_->setText("sync/");
+    receive_dir_edit_->setText("received/");
+    file_sync_checkbox_->setChecked(true);
+    security_checkbox_->setChecked(true);
+    require_approval_checkbox_->setChecked(true);
+}
 
-    device_name_edit_->setText(settings.value("device_name", "my-device").toString());
-    source_path_edit_->setText(settings.value("source_path", "sync/").toString());
-    receive_dir_edit_->setText(settings.value("receive_dir", "received/").toString());
-    file_sync_checkbox_->setChecked(settings.value("file_sync_enabled", true).toBool());
-    security_checkbox_->setChecked(settings.value("security_enabled", true).toBool());
-    require_approval_checkbox_->setChecked(settings.value("require_approval", true).toBool());
+bool SettingsDialog::loadConfig() {
+    if (config_path_.isEmpty()) {
+        return false;
+    }
+
+    QFile file(config_path_);
+    if (!file.open(QIODevice::ReadOnly)) {
+        loadDefaults();
+        return false;
+    }
+
+    const auto doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject()) {
+        loadDefaults();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    const QJsonObject file_sync = root.value("file_sync").toObject();
+    const QJsonObject security = root.value("security").toObject();
+
+    device_name_edit_->setText(file_sync.value("device_name").toString(QString::fromStdString(syncflow::platform::get_hostname())));
+    source_path_edit_->setText(file_sync.value("source_path").toString("sync/"));
+    receive_dir_edit_->setText(file_sync.value("receive_dir").toString("received"));
+    file_sync_checkbox_->setChecked(file_sync.value("enabled").toBool(true));
+    security_checkbox_->setChecked(security.value("enabled").toBool(true));
+    require_approval_checkbox_->setChecked(security.value("require_approval").toBool(true));
+    return true;
+}
+
+bool SettingsDialog::saveConfig() {
+    if (config_path_.isEmpty()) {
+        QMessageBox::warning(this, "No Config Path", "No config.json path is set.");
+        return false;
+    }
+
+    QJsonObject root;
+    {
+        QFile read_file(config_path_);
+        if (read_file.open(QIODevice::ReadOnly)) {
+            const auto existing = QJsonDocument::fromJson(read_file.readAll());
+            if (existing.isObject()) {
+                root = existing.object();
+            }
+        }
+    }
+
+    QJsonObject file_sync;
+    file_sync.insert("enabled", file_sync_checkbox_->isChecked());
+    file_sync.insert("source_path", source_path_edit_->text());
+    file_sync.insert("receive_dir", receive_dir_edit_->text());
+    file_sync.insert("device_name", device_name_edit_->text());
+
+    QJsonObject security = root.value("security").toObject();
+    security.insert("enabled", security_checkbox_->isChecked());
+    security.insert("require_approval", require_approval_checkbox_->isChecked());
+    if (!security.contains("cert_dir")) {
+        security.insert("cert_dir", ".syncflow/certs");
+    }
+    if (!security.contains("trusted_devices_file")) {
+        security.insert("trusted_devices_file", ".syncflow/trusted_devices.txt");
+    }
+
+    root.insert("file_sync", file_sync);
+    root.insert("security", security);
+
+    QFile file(config_path_);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, "Save Failed", QString("Unable to write %1").arg(config_path_));
+        return false;
+    }
+
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.write("\n");
+    return true;
 }
 
 void SettingsDialog::onBrowseSourceClicked() {
@@ -122,16 +214,9 @@ void SettingsDialog::onBrowseReceiveDirClicked() {
 }
 
 void SettingsDialog::onApplyClicked() {
-    QSettings settings("Syncflow", "Syncflow");
-    settings.setValue("device_name", device_name_edit_->text());
-    settings.setValue("source_path", source_path_edit_->text());
-    settings.setValue("receive_dir", receive_dir_edit_->text());
-    settings.setValue("file_sync_enabled", file_sync_checkbox_->isChecked());
-    settings.setValue("security_enabled", security_checkbox_->isChecked());
-    settings.setValue("require_approval", require_approval_checkbox_->isChecked());
-    settings.sync();
-
-    accept();
+    if (saveConfig()) {
+        accept();
+    }
 }
 
 void SettingsDialog::onCancelClicked() {
@@ -139,7 +224,9 @@ void SettingsDialog::onCancelClicked() {
 }
 
 void SettingsDialog::onResetClicked() {
-    loadSettings();
+    if (!loadConfig()) {
+        loadDefaults();
+    }
 }
 
 QString SettingsDialog::getDeviceName() const {

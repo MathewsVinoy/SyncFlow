@@ -103,7 +103,7 @@ Run the executable on all devices on the same network.
 
 ## Qt GUI (desktop UI)
 
-A Qt-based desktop GUI is available as a separate target `syncflow_gui` and provides a graphical interface for discovery, device approval, and file sync monitoring.
+A Qt-based desktop GUI is available as a separate target `syncflow_gui` and is used to view and edit `config.json` while `syncflow_peer` runs as the background sync process.
 
 Build the GUI target after configuring CMake (in the repository root):
 
@@ -119,7 +119,7 @@ cd build
 ./syncflow_gui
 ```
 
-On Windows run `syncflow_gui.exe` from the build output folder. If the app fails to start due to missing Qt libraries, run it with the appropriate library path environment variable (for example `LD_LIBRARY_PATH` on Linux).
+On Windows run `syncflow_gui.exe` from the build output folder. The GUI opens the current configuration and launches the peer in detached mode when possible. If the app fails to start due to missing Qt libraries, run it with the appropriate library path environment variable (for example `LD_LIBRARY_PATH` on Linux).
 
 ### Linux/macOS
 
