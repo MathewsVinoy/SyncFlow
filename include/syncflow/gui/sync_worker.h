@@ -5,11 +5,12 @@
 #include <memory>
 #include <thread>
 
-namespace syncflow::networking {
+namespace syncflow {
+namespace networking {
 class PeerNode;
 }
 
-namespace syncflow::gui {
+namespace gui {
 
 class SyncWorker : public QObject {
     Q_OBJECT
@@ -49,4 +50,5 @@ private:
     std::thread discovery_thread_;
 };
 
-}  // namespace syncflow::gui
+} // namespace gui
+} // namespace syncflow

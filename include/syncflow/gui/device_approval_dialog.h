@@ -7,7 +7,8 @@
 #include <QPushButton>
 #include <QString>
 
-namespace syncflow::gui {
+namespace syncflow {
+namespace gui {
 
 class DeviceApprovalDialog : public QDialog {
     Q_OBJECT
@@ -46,4 +47,5 @@ private:
     QPushButton* copy_button_;
 };
 
-}  // namespace syncflow::gui
+} // namespace gui
+} // namespace syncflow

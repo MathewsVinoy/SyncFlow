@@ -8,7 +8,8 @@
 #include <QThread>
 #include <memory>
 
-namespace syncflow::gui {
+namespace syncflow {
+namespace gui {
 
 class SyncWorker;
 
@@ -69,4 +70,5 @@ private:
     QString local_ip_;
 };
 
-}  // namespace syncflow::gui
+} // namespace gui
+} // namespace syncflow

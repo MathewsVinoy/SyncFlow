@@ -6,7 +6,8 @@
 #include <QPushButton>
 #include <QComboBox>
 
-namespace syncflow::gui {
+namespace syncflow {
+namespace gui {
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
@@ -56,4 +57,5 @@ private:
     QPushButton* reset_button_;
 };
 
-}  // namespace syncflow::gui
+} // namespace gui
+} // namespace syncflow

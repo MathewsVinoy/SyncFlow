@@ -103,6 +103,14 @@ add_executable(syncflow_gui
     resources/syncflow.qrc
 )
 
+# Ensure headers with Q_OBJECT are processed by automoc
+target_sources(syncflow_gui PRIVATE
+    include/syncflow/gui/main_window.h
+    include/syncflow/gui/settings_dialog.h
+    include/syncflow/gui/device_approval_dialog.h
+    include/syncflow/gui/sync_worker.h
+)
+
 target_include_directories(syncflow_gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
