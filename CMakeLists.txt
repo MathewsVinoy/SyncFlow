@@ -24,6 +24,10 @@ add_library(syncflow_core
     src/networking/peer_protocol.cpp
     src/networking/peer_node.cpp
     src/networking/file_transfer.cpp
+    src/security/certificate_manager.cpp
+    src/security/trusted_device_list.cpp
+    src/security/device_authenticator.cpp
+    src/security/integrity_checker.cpp
 )
 
 target_include_directories(syncflow_core PUBLIC
@@ -33,7 +37,8 @@ target_include_directories(syncflow_core PUBLIC
 target_compile_options(syncflow_core PRIVATE -Wall -Wextra -Wpedantic)
 
 find_package(Threads REQUIRED)
-target_link_libraries(syncflow_core PUBLIC Threads::Threads)
+find_package(OpenSSL REQUIRED)
+target_link_libraries(syncflow_core PUBLIC Threads::Threads OpenSSL::Crypto OpenSSL::SSL)
 
 target_link_libraries(syncflow_peer PRIVATE syncflow_core)
 

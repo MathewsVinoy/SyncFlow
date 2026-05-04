@@ -127,3 +127,69 @@ The default config uses [sync/](sync/) as a demo folder tree.
 
 - UDP discovery: 45454
 - TCP connection: 45455
+
+## Security
+
+Syncflow includes comprehensive security features to ensure only trusted devices can connect and that all transferred data is protected:
+
+### Features
+
+- **Device Authentication**: Each device generates a self-signed X.509 certificate with a unique fingerprint (SHA256)
+- **Trusted Device List**: Maintains a persistent list of approved devices stored in `.syncflow/trusted_devices.txt`
+- **Data Integrity**: All transferred data is protected using HMAC-SHA256 for integrity verification
+- **Certificate Management**: Automatic certificate generation and validation
+- **Man-in-the-Middle Protection**: Device fingerprints ensure communication is only established with approved peers
+
+### Certificate Management
+
+Certificates are automatically generated on first run and stored in `.syncflow/certs/`:
+
+```bash
+.syncflow/
+├── certs/
+│   ├── device.crt        # Self-signed X.509 certificate
+│   └── device.key        # Private key (protected)
+├── transfer.log          # File sync audit log
+└── trusted_devices.txt   # List of approved peers
+```
+
+### Trusted Devices
+
+First connection from a new device:
+
+1. Device sends its certificate with unique fingerprint
+2. Device is added to trusted list (not yet approved)
+3. User approves device:
+   ```bash
+   ./build/syncflow_peer approve-device <fingerprint>
+   ```
+4. Once approved, future connections are allowed
+
+### Configuration
+
+Edit `config.json` security section:
+
+```json
+"security": {
+  "enabled": true,                              // Enable security features
+  "cert_dir": ".syncflow/certs",               // Certificate storage directory
+  "require_approval": true,                     // Require manual approval for new devices
+  "trusted_devices_file": ".syncflow/trusted_devices.txt"  // Trusted devices list
+}
+```
+
+### Best Practices
+
+- **Secure Key Storage**: Private keys are stored locally with restricted file permissions (600)
+- **Certificate Pinning**: Device fingerprints act as certificate pins for peer verification
+- **Approval Workflow**: New devices require explicit user approval before sync begins
+- **Audit Logging**: All transfers include timing and integrity information in `.syncflow/transfer.log`
+- **Network Security**: Use on trusted networks (LAN); consider VPN for untrusted networks
+
+### Data Protection
+
+All transferred files are verified using HMAC-SHA256:
+
+- File integrity: Detects accidental corruption or tampering
+- Authentication: Proves sender identity using certificate fingerprint
+- Non-repudiation: Transfer records include device identity and timestamps

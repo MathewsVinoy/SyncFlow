@@ -4,5 +4,11 @@
     "source_path": "sync/",
     "receive_dir": "received",
     "device_name": ""
+  },
+  "security": {
+    "enabled": true,
+    "cert_dir": ".syncflow/certs",
+    "require_approval": true,
+    "trusted_devices_file": ".syncflow/trusted_devices.txt"
   }
 }

@@ -47,29 +47,17 @@ bool CertificateManager::generate_self_signed_cert(const std::string& device_nam
         return load_certificate();
     }
 
-    // Generate a 2048-bit RSA key
-    EVP_PKEY* pkey = EVP_PKEY_new();
-    RSA* rsa = RSA_new();
-    BIGNUM* exponent = BN_new();
+    // Use EVP API for OpenSSL 3.0 compatibility
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    if (!ctx) return false;
 
-    if (!pkey || !rsa || !exponent) {
-        EVP_PKEY_free(pkey);
-        RSA_free(rsa);
-        BN_free(exponent);
-        return false;
-    }
+    EVP_PKEY* pkey = nullptr;
+    EVP_PKEY_keygen_init(ctx);
+    EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048);
+    EVP_PKEY_keygen(ctx, &pkey);
+    EVP_PKEY_CTX_free(ctx);
 
-    BN_set_word(exponent, RSA_F4);
-    int key_bits = 2048;
-    if (!RSA_generate_key_ex(rsa, key_bits, exponent, nullptr)) {
-        EVP_PKEY_free(pkey);
-        RSA_free(rsa);
-        BN_free(exponent);
-        return false;
-    }
-
-    BN_free(exponent);
-    EVP_PKEY_assign_RSA(pkey, rsa);
+    if (!pkey) return false;
 
     // Create X509 certificate
     X509* cert = X509_new();
@@ -90,8 +78,8 @@ bool CertificateManager::generate_self_signed_cert(const std::string& device_nam
 
     // Set certificate subject (CN = device name)
     X509_NAME* name = X509_get_subject_name(cert);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASN1, 
-                               reinterpret_cast<const unsigned char*>(device_name.c_str()), 
+    X509_NAME_add_entry_by_txt(name, "CN", V_ASN1_UTF8STRING,
+                               reinterpret_cast<const unsigned char*>(device_name.c_str()),
                                -1, -1, 0);
 
     // Set issuer same as subject (self-signed)
