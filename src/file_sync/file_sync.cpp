@@ -100,6 +100,11 @@ FileSyncConfig load_config(const std::filesystem::path& config_path) {
         config.receive_dir = resolve_relative(base_dir, receive_dir);
     }
 
+    const std::string device_name = extract_string_value(content, "device_name");
+    if (!device_name.empty()) {
+        config.device_name = device_name;
+    }
+
     return config;
 }
 

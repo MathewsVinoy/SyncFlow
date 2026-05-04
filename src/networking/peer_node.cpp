@@ -352,10 +352,23 @@ bool connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds 
 }  // namespace
 
 PeerNode::PeerNode(std::string device_name)
-        : device_name_(std::move(device_name)),
-            local_ip_(platform::get_local_ipv4()),
-            logger_(device_name_, local_ip_),
-            file_sync_config_(syncflow::file_sync::load_config(find_config_path())) {}
+        : file_sync_config_(syncflow::file_sync::load_config(find_config_path())),
+          device_name_([&]() -> std::string {
+              if (!device_name.empty()) {
+                  return device_name;
+              }
+              if (!file_sync_config_.device_name.empty()) {
+                  return file_sync_config_.device_name;
+              }
+#ifdef DEVICE_NAME
+              return std::string(DEVICE_NAME);
+#else
+              return platform::get_hostname();
+#endif
+          }()),
+          local_ip_(platform::get_local_ipv4()),
+          logger_(device_name_, local_ip_) {}
+
 
 void PeerNode::run() {
     platform::install_signal_handlers(running_);

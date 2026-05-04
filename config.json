@@ -2,6 +2,7 @@
   "file_sync": {
     "enabled": true,
     "source_path": "sync/",
-    "receive_dir": "received"
+    "receive_dir": "received",
+    "device_name": ""
   }
 }

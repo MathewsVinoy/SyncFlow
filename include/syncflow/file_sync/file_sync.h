@@ -9,6 +9,7 @@ struct FileSyncConfig {
     bool enabled{false};
     std::filesystem::path source_path;
     std::filesystem::path receive_dir{"received"};
+    std::string device_name{};
 };
 
 FileSyncConfig load_config(const std::filesystem::path& config_path);
