@@ -19,6 +19,7 @@ import java.net.InetSocketAddress
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
 
@@ -27,14 +28,8 @@ class SyncService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var isRunning = false
     private var activeSocket: Socket? = null
+    private var tcpServerSocket: ServerSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
-
-    private data class DiscoveredPeer(
-        val magic: String,
-        val name: String,
-        val ip: String,
-        val tcpPort: Int,
-    )
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
@@ -85,7 +80,7 @@ class SyncService : Service() {
                 LogManager.addLog("Networking init result: $result")
 
                 acquireMulticastLock()
-                discoverAndConnectToSyncflow()
+                startMobilePeerMode()
 
                 // Monitoring loop while service is active
                 while (isRunning && isActive) {
@@ -98,100 +93,138 @@ class SyncService : Service() {
         }
     }
 
-    private suspend fun discoverAndConnectToSyncflow() {
+    private suspend fun startMobilePeerMode() {
         withContext(Dispatchers.IO) {
             val deviceName = ConnectionManager.getDeviceName(this@SyncService)
             val localIp = ConnectionManager.getLocalIPAddress()
-            val helloLine = "HELLO|SYNCFLOW_PEER|$deviceName|$localIp|45455\n"
 
             ConnectionManager.setState(ConnectionManager.ConnectionState.CONNECTING)
-            LogManager.addLog("Listening for Syncflow UDP discovery on 45454...")
+            LogManager.addLog("Mobile peer mode enabled. Advertising $deviceName at $localIp:45455")
 
-            val discoverySocket = DatagramSocket(45454).apply {
-                soTimeout = 2000
-                reuseAddress = true
-                broadcast = true
-            }
-
-            val buffer = ByteArray(1024)
-            var connected = false
+            val udpThread = launch { broadcastPresenceLoop(deviceName, localIp) }
+            val tcpThread = launch { acceptIncomingConnections(deviceName, localIp) }
 
             try {
-                while (isRunning && !connected) {
-                    val packet = DatagramPacket(buffer, buffer.size)
-                    try {
-                        discoverySocket.receive(packet)
-                    } catch (_: SocketTimeoutException) {
-                        continue
-                    }
-
-                    val payload = String(packet.data, 0, packet.length).trim()
-                    val peer = parsePeerInfo(payload) ?: continue
-                    if (peer.magic != "SYNCFLOW_PEER") continue
-
-                    if (peer.ip == localIp) {
-                        continue
-                    }
-
-                    LogManager.addLog("Discovered Syncflow peer ${peer.name} at ${peer.ip}:${peer.tcpPort}")
-                    connected = tryConnectToPeer(peer, helloLine)
-                }
+                joinAll(udpThread, tcpThread)
             } finally {
-                discoverySocket.close()
-            }
-
-            if (!connected) {
-                ConnectionManager.setState(ConnectionManager.ConnectionState.DISCONNECTED)
-                LogManager.addLog("No Syncflow peer discovered on the LAN.")
+                try {
+                    tcpServerSocket?.close()
+                } catch (_: Exception) {
+                }
+                tcpServerSocket = null
             }
         }
     }
 
-    private fun tryConnectToPeer(peer: DiscoveredPeer, helloLine: String): Boolean {
-        val socket = Socket()
-        return try {
-            socket.tcpNoDelay = true
-            socket.soTimeout = 4000
-            socket.connect(InetSocketAddress(peer.ip, peer.tcpPort), 4000)
-
-            val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-
-            writer.write(helloLine)
-            writer.flush()
-
-            activeSocket = socket
-            ConnectionManager.setState(ConnectionManager.ConnectionState.CONNECTED)
-            LogManager.addLog("Connected to Syncflow at ${peer.ip}:${peer.tcpPort}")
-
-            try {
-                val response = reader.readLine()
-                if (!response.isNullOrBlank()) {
-                    LogManager.addLog("Syncflow response: $response")
-                }
-            } catch (_: SocketTimeoutException) {
-                LogManager.addLog("Connected. Waiting for sync data...")
+    private suspend fun broadcastPresenceLoop(deviceName: String, localIp: String) {
+        withContext(Dispatchers.IO) {
+            val payload = "SYNCFLOW_PEER|$deviceName|$localIp|45455\n".toByteArray()
+            val broadcastSocket = DatagramSocket().apply {
+                broadcast = true
+                reuseAddress = true
             }
 
-            while (isRunning && socket.isConnected && !socket.isClosed) {
+            try {
+                while (isRunning) {
+                    val destinations = listOf(
+                        InetAddress.getByName("255.255.255.255"),
+                        InetAddress.getByName("239.255.42.99")
+                    )
+
+                    for (destination in destinations) {
+                        try {
+                            val packet = DatagramPacket(payload, payload.size, destination, 45454)
+                            broadcastSocket.send(packet)
+                        } catch (e: Exception) {
+                            LogManager.addLog("UDP broadcast failed to $destination: ${e.message}")
+                        }
+                    }
+
+                    delay(2000)
+                }
+            } finally {
                 try {
-                    val line = reader.readLine() ?: break
-                    if (line.isNotBlank()) {
-                        LogManager.addLog("Syncflow: $line")
+                    broadcastSocket.close()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private suspend fun acceptIncomingConnections(deviceName: String, localIp: String) {
+        withContext(Dispatchers.IO) {
+            val helloLine = "HELLO|SYNCFLOW_PEER|$deviceName|$localIp|45455\n"
+
+            try {
+                tcpServerSocket = ServerSocket(45455).apply {
+                    reuseAddress = true
+                }
+                LogManager.addLog("TCP server listening on 45455 for incoming desktop Syncflow connections")
+
+                while (isRunning) {
+                    val socket = try {
+                        tcpServerSocket?.accept()
+                    } catch (_: Exception) {
+                        null
+                    } ?: continue
+
+                    launch {
+                        handleIncomingDesktopConnection(socket, helloLine)
+                    }
+                }
+            } catch (e: Exception) {
+                LogManager.addLog("Failed to open TCP server on mobile IP: ${e.message}")
+                ConnectionManager.setState(ConnectionManager.ConnectionState.DISCONNECTED)
+            }
+        }
+    }
+
+    private suspend fun handleIncomingDesktopConnection(socket: Socket, helloLine: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                socket.tcpNoDelay = true
+                socket.soTimeout = 4000
+
+                val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+
+                writer.write(helloLine)
+                writer.flush()
+
+                activeSocket = socket
+                ConnectionManager.setState(ConnectionManager.ConnectionState.CONNECTED)
+                LogManager.addLog("Desktop Syncflow connected from ${socket.inetAddress.hostAddress}:${socket.port}")
+
+                try {
+                    val response = reader.readLine()
+                    if (!response.isNullOrBlank()) {
+                        LogManager.addLog("Desktop response: $response")
                     }
                 } catch (_: SocketTimeoutException) {
-                    // no-op
+                    LogManager.addLog("Handshake complete. Waiting for desktop Syncflow messages...")
                 }
-            }
 
-            true
-        } catch (e: Exception) {
-            LogManager.addLog("Connection failed to ${peer.ip}:${peer.tcpPort} - ${e.message}")
-            false
-        } finally {
-            try {
-                socket.close()
-            } catch (_: Exception) {
+                while (isRunning && socket.isConnected && !socket.isClosed) {
+                    try {
+                        val line = reader.readLine() ?: break
+                        if (line.isNotBlank()) {
+                            LogManager.addLog("Desktop Syncflow: $line")
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // no-op
+                    }
+                }
+            } catch (e: Exception) {
+                LogManager.addLog("Incoming connection error: ${e.message}")
+            } finally {
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+                if (activeSocket === socket) {
+                    activeSocket = null
+                    ConnectionManager.setState(ConnectionManager.ConnectionState.DISCONNECTED)
+                }
             }
         }
     }
@@ -243,6 +276,11 @@ class SyncService : Service() {
         } catch (_: Exception) {
         }
         activeSocket = null
+        try {
+            tcpServerSocket?.close()
+        } catch (_: Exception) {
+        }
+        tcpServerSocket = null
         try {
             multicastLock?.let { if (it.isHeld) it.release() }
         } catch (_: Exception) {
