@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class SyncConnectionService : Service() {
 
     private val running = AtomicBoolean(false)
+    private val testing = AtomicBoolean(false)
     @Volatile private var workerThread: Thread? = null
     @Volatile private var currentRemoteDevice: String = ""
     @Volatile private var currentRemoteIp: String = ""
@@ -32,6 +33,20 @@ class SyncConnectionService : Service() {
             ACTION_STOP -> {
                 stopLoop("Stopping background connection")
                 stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_TEST -> {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val host = intent.getStringExtra(EXTRA_HOST)
+                    ?: prefs.getString(KEY_HOST, "192.168.1.10")
+                    ?: "192.168.1.10"
+                val port = intent.getIntExtra(EXTRA_PORT, DEFAULT_PORT)
+                val deviceName = intent.getStringExtra(EXTRA_DEVICE_NAME)
+                    ?: prefs.getString(KEY_DEVICE_NAME, "Android")
+                    ?: "Android"
+
+                startForeground(NOTIFICATION_ID, buildNotification("Testing connection to $host:$port"))
+                testConnectionOnce(host, port, deviceName)
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
@@ -69,6 +84,7 @@ class SyncConnectionService : Service() {
 
     private fun startLoop(host: String, port: Int, deviceName: String) {
         if (running.getAndSet(true)) return
+        testing.set(false)
 
         workerThread = Thread {
             while (running.get()) {
@@ -110,8 +126,7 @@ class SyncConnectionService : Service() {
                         handleIncomingLine(line, host)
                     }
                 } catch (error: Exception) {
-                    sendStatus("Disconnected: ${error.message ?: "connection error"}")
-                    sendLog("Connection error: ${error.message ?: error::class.java.simpleName}")
+                    sendConnectionError(host, port, localIp, error)
                 } finally {
                     try {
                         socket?.close()
@@ -129,6 +144,49 @@ class SyncConnectionService : Service() {
         }
     }
 
+    private fun testConnectionOnce(host: String, port: Int, deviceName: String) {
+        if (testing.getAndSet(true)) return
+
+        Thread {
+            val localIp = localIpv4Address()
+            currentLocalDevice = deviceName
+            var socket: Socket? = null
+            try {
+                sendLog("Running connection test to $host:$port")
+                socket = Socket()
+                socket.soTimeout = 1000
+                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                val writer = OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8)
+                writer.write("HELLO|SYNCFLOW_PEER|$deviceName|$localIp|$CLIENT_TCP_PORT\n")
+                writer.flush()
+
+                sendStatus("Test connected to $host:$port")
+                sendConnectionState("Test connected", host, localIp, host)
+                sendLog("Connection test succeeded")
+
+                val line = try {
+                    reader.readLine()
+                } catch (_: SocketTimeoutException) {
+                    null
+                }
+                if (!line.isNullOrBlank()) {
+                    sendLog("Test RX: $line")
+                }
+            } catch (error: Exception) {
+                sendConnectionError(host, port, localIp, error)
+            } finally {
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
+                testing.set(false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            }
+        }.start()
+    }
+
     private fun stopLoop(reason: String) {
         running.set(false)
         workerThread?.interrupt()
@@ -136,6 +194,29 @@ class SyncConnectionService : Service() {
         sendLog(reason)
         sendStatus(reason)
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun sendConnectionError(host: String, port: Int, localIp: String, error: Exception) {
+        val message = buildString {
+            append(error::class.java.simpleName)
+            error.message?.takeIf { it.isNotBlank() }?.let {
+                append(": ")
+                append(it)
+            }
+            append(" [host=")
+            append(host)
+            append(':')
+            append(port)
+            append(", localIp=")
+            append(localIp)
+            append("]")
+        }
+        sendStatus("Disconnected")
+        sendBroadcast(
+            Intent(ACTION_ERROR)
+                .putExtra(EXTRA_MESSAGE, message)
+        )
+        sendLog("Connection error: $message")
     }
 
     private fun handleIncomingLine(line: String, host: String) {
@@ -237,9 +318,11 @@ class SyncConnectionService : Service() {
     companion object {
         const val ACTION_START = "com.syncflow.action.START"
         const val ACTION_STOP = "com.syncflow.action.STOP"
+        const val ACTION_TEST = "com.syncflow.action.TEST"
         const val ACTION_STATUS = "com.syncflow.action.STATUS"
         const val ACTION_CONNECTION = "com.syncflow.action.CONNECTION"
         const val ACTION_LOG = "com.syncflow.action.LOG"
+        const val ACTION_ERROR = "com.syncflow.action.ERROR"
 
         const val EXTRA_MESSAGE = "extra_message"
         const val EXTRA_HOST = "extra_host"
