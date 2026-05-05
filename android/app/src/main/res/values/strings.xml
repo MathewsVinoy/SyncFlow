@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">syncflow</string>
+    <string name="device_status">Device Status</string>
+    <string name="connection_status">Connection Status:</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="connecting">Connecting...</string>
+    <string name="start">Start Sync</string>
+    <string name="stop">Stop Sync</string>
+    <string name="clear_logs">Clear Logs</string>
+    <string name="debug_logs">Debug Logs</string>
+    <string name="logs_empty">Waiting for logs...</string>
 </resources>
