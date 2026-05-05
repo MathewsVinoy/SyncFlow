@@ -7,18 +7,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
-import android.widget.TextView
-import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
-import androidx.lifecycle.lifecycleScope
 import com.syncflow.databinding.ActivityMainBinding
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,17 +20,28 @@ class MainActivity : AppCompatActivity() {
     private var isServiceRunning = false
 
     private val manageAllFilesLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        ensurePermissionsAndStartService()
+        ensurePermissions()
     }
 
-    private val runtimePermissions = arrayOf(
-        Manifest.permission.READ_EXTERNAL_STORAGE,
-        Manifest.permission.WRITE_EXTERNAL_STORAGE,
-        Manifest.permission.ACCESS_WIFI_STATE,
-        Manifest.permission.CHANGE_WIFI_STATE,
-        Manifest.permission.ACCESS_NETWORK_STATE,
-        Manifest.permission.FOREGROUND_SERVICE
-    )
+    private fun getRuntimePermissions(): Array<String> {
+        val permissions = mutableListOf<String>()
+
+        // Only request dangerous storage permissions that are valid for the current API level.
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                // Android 11+: storage access is handled via MANAGE_EXTERNAL_STORAGE settings screen.
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            else -> {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+
+        return permissions.toTypedArray()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,8 +82,8 @@ class MainActivity : AppCompatActivity() {
             LogManager.addLog("Logs cleared by user")
         }
 
-        // Request permissions and start service
-        ensurePermissionsAndStartService()
+        // Request permissions only; start is user-triggered from the Start button
+        ensurePermissions()
     }
 
     private fun updateDeviceInfo() {
@@ -102,7 +107,8 @@ class MainActivity : AppCompatActivity() {
         LogManager.addLog("Device: $deviceName, IP: $deviceIp, WiFi: $isConnected")
     }
 
-    private fun ensurePermissionsAndStartService() {
+    private fun ensurePermissions() {
+        val runtimePermissions = getRuntimePermissions()
         if (!hasAllPermissions()) {
             ActivityCompat.requestPermissions(this, runtimePermissions, PERMISSION_REQUEST_CODE)
             return
@@ -123,10 +129,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        startSyncServiceInternal()
+        LogManager.addLog("Permissions ready. Tap Start Sync to launch foreground service.")
     }
 
     private fun hasAllPermissions(): Boolean {
+        val runtimePermissions = getRuntimePermissions()
         for (p in runtimePermissions) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                 return false
@@ -137,6 +144,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun startSyncService() {
         LogManager.addLog("User requested to start sync service")
+        if (!hasAllPermissions()) {
+            LogManager.addLog("Missing runtime permissions. Requesting now...")
+            ensurePermissions()
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !android.os.Environment.isExternalStorageManager()) {
+            LogManager.addLog("All-files permission required. Requesting now...")
+            ensurePermissions()
+            return
+        }
+
         startSyncServiceInternal()
     }
 
@@ -173,7 +192,7 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (hasAllPermissions()) {
                 LogManager.addLog("All permissions granted")
-                startSyncServiceInternal()
+                LogManager.addLog("Tap Start Sync to start foreground service")
             } else {
                 LogManager.addLog("Some permissions were denied")
             }

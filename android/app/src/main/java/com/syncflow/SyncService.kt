@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 
@@ -36,7 +37,14 @@ class SyncService : Service() {
             .setOngoing(true)
             .build()
 
-        startForeground(1, notification)
+        try {
+            startForeground(1, notification)
+        } catch (e: Exception) {
+            Log.e("syncflow", "Foreground start denied", e)
+            LogManager.addLog("Foreground service start denied: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // Start networking in background
         if (!isRunning) {
