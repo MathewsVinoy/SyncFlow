@@ -27,8 +27,8 @@ object ConnectionManager {
     fun getDeviceName(context: Context): String {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-                Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
-                    ?: android.os.Build.MODEL
+                val deviceName = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+                deviceName ?: android.os.Build.MODEL
             } else {
                 @Suppress("DEPRECATION")
                 Settings.Secure.getString(context.contentResolver, "bluetooth_name")
@@ -59,7 +59,9 @@ object ConnectionManager {
 
     fun isWifiConnected(context: Context): Boolean {
         return try {
+            @Suppress("DEPRECATION")
             val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            @Suppress("DEPRECATION")
             wifiManager?.connectionInfo != null && wifiManager.isWifiEnabled
         } catch (e: Exception) {
             false
