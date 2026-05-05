@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
             addAction(SyncConnectionService.ACTION_LOG)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(statusReceiver, filter, Context.RECEIVER_EXPORTED)
+            registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(statusReceiver, filter)

@@ -90,8 +90,10 @@ class SyncConnectionService : Service() {
                     writer.write(hello)
                     writer.flush()
 
+                    currentRemoteDevice = host
+                    currentRemoteIp = host
                     sendStatus("Connected to $host:$port")
-                    sendConnectionState("Connected", deviceName, localIp, host)
+                    sendConnectionState("Connected", host, localIp, host)
                     sendLog("TCP connected to desktop sync peer")
 
                     while (running.get()) {
@@ -219,7 +221,7 @@ class SyncConnectionService : Service() {
             val interfaces = java.net.NetworkInterface.getNetworkInterfaces().toList()
             interfaces.asSequence()
                 .flatMap { it.inetAddresses.toList().asSequence() }
-                .firstOrNull { address -> !address.isLoopbackAddress && address.hostAddress.contains('.') }
+                .firstOrNull { address -> !address.isLoopbackAddress && (address.hostAddress?.contains('.') == true) }
                 ?.hostAddress
                 ?: "0.0.0.0"
         } catch (_: Exception) {
