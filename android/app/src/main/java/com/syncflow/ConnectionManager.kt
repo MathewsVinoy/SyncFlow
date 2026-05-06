@@ -49,37 +49,43 @@ object ConnectionManager {
 
     fun getLocalIPAddress(): String {
         return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            for (iface in interfaces) {
-                if (iface.isUp && !iface.isLoopback) {
-                    for (address in iface.inetAddresses) {
-                        val hostAddress = address.hostAddress
-                        if (!address.isLoopbackAddress && hostAddress?.contains(".") == true) {
-                            return hostAddress
-                        }
+            val en = NetworkInterface.getNetworkInterfaces()
+            while (en.hasMoreElements()) {
+                val intf = en.nextElement()
+                if (!intf.isUp || intf.isLoopback) continue
+                val addrs = intf.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    val hostAddress = addr.hostAddress ?: continue
+                    // Prefer IPv4 addresses and skip link-local / loopback
+                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                        // strip any zone id if present (rare for IPv4, defensive)
+                        val clean = hostAddress.substringBefore('%')
+                        return clean
                     }
                 }
             }
             "No IP"
         } catch (e: Exception) {
-            "Error: ${e.message}"
+            "Error: ${e::class.java.simpleName} ${e.message ?: "(no message)"}"
         }
     }
 
     fun isWifiConnected(context: Context): Boolean {
         return try {
             val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (connectivityManager == null) return false
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val network = connectivityManager?.activeNetwork ?: return false
+                val network = connectivityManager.activeNetwork ?: return false
                 val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
-                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                // Return true only when connected over Wi-Fi (we want Wi‑Fi specifically)
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
             } else {
                 @Suppress("DEPRECATION")
                 val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
                 @Suppress("DEPRECATION")
-                wifiManager?.connectionInfo != null && wifiManager.isWifiEnabled
+                wifiManager?.isWifiEnabled == true && (wifiManager.connectionInfo != null)
             }
         } catch (e: Exception) {
             false

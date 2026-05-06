@@ -229,13 +229,6 @@ class SyncService : Service() {
         }
     }
 
-    private fun parsePeerInfo(payload: String): DiscoveredPeer? {
-        val parts = payload.split('|')
-        if (parts.size != 4) return null
-        val port = parts[3].toIntOrNull() ?: return null
-        return DiscoveredPeer(parts[0], parts[1], parts[2], port)
-    }
-
     private fun acquireMulticastLock() {
         try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
