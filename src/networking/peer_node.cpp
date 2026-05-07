@@ -214,6 +214,14 @@ std::filesystem::path hidden_sync_log_path(const std::filesystem::path& base_pat
     return hidden_sync_folder(base_path) / "transfer.log";
 }
 
+std::string ipv4_to_string(const in_addr& addr) {
+    char buffer[INET_ADDRSTRLEN] = {};
+    if (::inet_ntop(AF_INET, &addr, buffer, sizeof(buffer)) != nullptr) {
+        return buffer;
+    }
+    return {};
+}
+
 std::chrono::system_clock::time_point file_time_to_system_time(const std::filesystem::file_time_type& file_time) {
     return std::chrono::time_point_cast<std::chrono::system_clock::duration>(
         file_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
@@ -1200,6 +1208,11 @@ void PeerNode::udp_listener_loop() {
         PeerInfo peer;
         if (!parse_peer_info(buffer.data(), peer)) {
             continue;
+        }
+
+        const std::string source_ip = ipv4_to_string(from.sin_addr);
+        if (!source_ip.empty()) {
+            peer.ip = source_ip;
         }
 
         if (peer.name == device_name_ && peer.ip == local_ip_) {
