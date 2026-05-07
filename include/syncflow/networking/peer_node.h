@@ -24,8 +24,8 @@ public:
     std::string status_summary() const;
 
 private:
-    syncflow::file_sync::FileSyncConfig file_sync_config_;
     std::filesystem::path config_path_;
+    syncflow::file_sync::FileSyncConfig file_sync_config_;
     std::string device_name_;
     std::string local_ip_;
     syncflow::Logger logger_;
