@@ -56,17 +56,25 @@ object ConnectionManager {
     fun getLocalIPAddress(context: Context? = null): String {
         return try {
             val ctx = context ?: this.context
-            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Starting enumeration...")
+            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Starting enumeration... (context=$ctx)")
             
             // First try ConnectivityManager (more reliable on newer Android)
             val connectivityManager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            android.util.Log.d("ConnectionManager", "ConnectivityManager: $connectivityManager")
+            
             if (connectivityManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.util.Log.d("ConnectionManager", "Using ConnectivityManager path (API >= M)")
                 val network = connectivityManager.activeNetwork
+                android.util.Log.d("ConnectionManager", "activeNetwork: $network")
+                
                 if (network != null) {
                     val linkProperties = connectivityManager.getLinkProperties(network)
+                    android.util.Log.d("ConnectionManager", "linkProperties: $linkProperties")
+                    
                     if (linkProperties != null) {
                         for (addr in linkProperties.linkAddresses) {
                             val ip = addr.address.hostAddress
+                            android.util.Log.d("ConnectionManager", "  Address: $ip, IPv4=${addr.address is java.net.Inet4Address}")
                             if (ip != null && addr.address is java.net.Inet4Address) {
                                 android.util.Log.i("ConnectionManager", "Found local IP via ConnectivityManager: $ip")
                                 return ip.substringBefore('%')
@@ -77,6 +85,7 @@ object ConnectionManager {
             }
 
             // Fallback to NetworkInterface enumeration
+            android.util.Log.d("ConnectionManager", "Falling back to NetworkInterface enumeration")
             val en = NetworkInterface.getNetworkInterfaces()
             android.util.Log.d("ConnectionManager", "getLocalIPAddress: Enumeration result: $en")
             
