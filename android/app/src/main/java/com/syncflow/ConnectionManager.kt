@@ -56,27 +56,43 @@ object ConnectionManager {
     fun getLocalIPAddress(context: Context? = null): String {
         return try {
             val ctx = context ?: this.context
-            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Starting enumeration... (context=$ctx)")
+            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Starting...")
             
             // First try ConnectivityManager (more reliable on newer Android)
             val connectivityManager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            android.util.Log.d("ConnectionManager", "ConnectivityManager: $connectivityManager")
-            
             if (connectivityManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 android.util.Log.d("ConnectionManager", "Using ConnectivityManager path (API >= M)")
-                val network = connectivityManager.activeNetwork
+                
+                // Try the active network first
+                var network = connectivityManager.activeNetwork
                 android.util.Log.d("ConnectionManager", "activeNetwork: $network")
                 
-                if (network != null) {
-                    val linkProperties = connectivityManager.getLinkProperties(network)
-                    android.util.Log.d("ConnectionManager", "linkProperties: $linkProperties")
+                // If no active network, try to get all networks
+                if (network == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    android.util.Log.d("ConnectionManager", "No active network, trying getAllNetworks()")
+                    val allNetworks = connectivityManager.allNetworks
+                    android.util.Log.d("ConnectionManager", "allNetworks: ${allNetworks.size} networks")
                     
+                    // Try each network to find one with IPv4
+                    for (net in allNetworks) {
+                        val linkProperties = connectivityManager.getLinkProperties(net)
+                        if (linkProperties != null) {
+                            for (addr in linkProperties.linkAddresses) {
+                                val ip = addr.address.hostAddress
+                                if (ip != null && addr.address is java.net.Inet4Address) {
+                                    android.util.Log.i("ConnectionManager", "Found local IPv4 via ConnectivityManager: $ip")
+                                    return ip.substringBefore('%')
+                                }
+                            }
+                        }
+                    }
+                } else if (network != null) {
+                    val linkProperties = connectivityManager.getLinkProperties(network)
                     if (linkProperties != null) {
                         for (addr in linkProperties.linkAddresses) {
                             val ip = addr.address.hostAddress
-                            android.util.Log.d("ConnectionManager", "  Address: $ip, IPv4=${addr.address is java.net.Inet4Address}")
                             if (ip != null && addr.address is java.net.Inet4Address) {
-                                android.util.Log.i("ConnectionManager", "Found local IP via ConnectivityManager: $ip")
+                                android.util.Log.i("ConnectionManager", "Found local IPv4 via ConnectivityManager: $ip")
                                 return ip.substringBefore('%')
                             }
                         }
@@ -85,38 +101,33 @@ object ConnectionManager {
             }
 
             // Fallback to NetworkInterface enumeration
-            android.util.Log.d("ConnectionManager", "Falling back to NetworkInterface enumeration")
+            android.util.Log.d("ConnectionManager", "Trying NetworkInterface enumeration...")
             val en = NetworkInterface.getNetworkInterfaces()
-            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Enumeration result: $en")
+            android.util.Log.d("ConnectionManager", "Enumeration result: $en")
             
-            if (en == null) {
-                android.util.Log.w("ConnectionManager", "getLocalIPAddress: NetworkInterface.getNetworkInterfaces() returned null")
-                return "No interfaces"
-            }
-            
-            while (en.hasMoreElements()) {
-                val intf = en.nextElement()
-                android.util.Log.d("ConnectionManager", "Interface: ${intf.name}, up=${intf.isUp}, loopback=${intf.isLoopback}")
-                
-                if (!intf.isUp || intf.isLoopback) continue
-                val addrs = intf.inetAddresses ?: continue
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    val hostAddress = addr.hostAddress ?: continue
-                    android.util.Log.d("ConnectionManager", "  Address: $hostAddress, IPv4=${addr is java.net.Inet4Address}, loopback=${addr.isLoopbackAddress}")
-                    // Prefer IPv4 addresses and skip link-local / loopback
-                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                        // strip any zone id if present (rare for IPv4, defensive)
-                        val clean = hostAddress.substringBefore('%')
-                        android.util.Log.i("ConnectionManager", "Found local IP: $clean")
-                        return clean
+            if (en != null) {
+                while (en.hasMoreElements()) {
+                    val intf = en.nextElement()
+                    android.util.Log.d("ConnectionManager", "Interface: ${intf.name}, up=${intf.isUp}, loopback=${intf.isLoopback}")
+                    
+                    if (!intf.isUp || intf.isLoopback) continue
+                    val addrs = intf.inetAddresses ?: continue
+                    while (addrs.hasMoreElements()) {
+                        val addr = addrs.nextElement()
+                        val hostAddress = addr.hostAddress ?: continue
+                        if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                            val clean = hostAddress.substringBefore('%')
+                            android.util.Log.i("ConnectionManager", "Found local IP via NetworkInterface: $clean")
+                            return clean
+                        }
                     }
                 }
             }
-            "No IPv4 found"
+
+            "No IP found"
         } catch (e: Exception) {
             android.util.Log.e("ConnectionManager", "getLocalIPAddress: Exception", e)
-            "Error: ${e::class.java.simpleName}: ${e.message ?: "(no detail)"}"
+            "Error: ${e::class.java.simpleName}"
         }
     }
 
