@@ -32,6 +32,12 @@ object ConnectionManager {
         logCallback?.invoke("[${System.currentTimeMillis()}] $message")
     }
 
+    private lateinit var context: Context
+
+    fun init(ctx: Context) {
+        context = ctx
+    }
+
     fun getDeviceName(context: Context): String {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
@@ -47,34 +53,68 @@ object ConnectionManager {
         }
     }
 
-    fun getLocalIPAddress(): String {
+    fun getLocalIPAddress(context: Context? = null): String {
         return try {
+            val ctx = context ?: this.context
+            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Starting enumeration...")
+            
+            // First try ConnectivityManager (more reliable on newer Android)
+            val connectivityManager = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (connectivityManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val network = connectivityManager.activeNetwork
+                if (network != null) {
+                    val linkProperties = connectivityManager.getLinkProperties(network)
+                    if (linkProperties != null) {
+                        for (addr in linkProperties.linkAddresses) {
+                            val ip = addr.address.hostAddress
+                            if (ip != null && addr.address is java.net.Inet4Address) {
+                                android.util.Log.i("ConnectionManager", "Found local IP via ConnectivityManager: $ip")
+                                return ip.substringBefore('%')
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback to NetworkInterface enumeration
             val en = NetworkInterface.getNetworkInterfaces()
+            android.util.Log.d("ConnectionManager", "getLocalIPAddress: Enumeration result: $en")
+            
+            if (en == null) {
+                android.util.Log.w("ConnectionManager", "getLocalIPAddress: NetworkInterface.getNetworkInterfaces() returned null")
+                return "No interfaces"
+            }
+            
             while (en.hasMoreElements()) {
                 val intf = en.nextElement()
+                android.util.Log.d("ConnectionManager", "Interface: ${intf.name}, up=${intf.isUp}, loopback=${intf.isLoopback}")
+                
                 if (!intf.isUp || intf.isLoopback) continue
-                val addrs = intf.inetAddresses
+                val addrs = intf.inetAddresses ?: continue
                 while (addrs.hasMoreElements()) {
                     val addr = addrs.nextElement()
                     val hostAddress = addr.hostAddress ?: continue
+                    android.util.Log.d("ConnectionManager", "  Address: $hostAddress, IPv4=${addr is java.net.Inet4Address}, loopback=${addr.isLoopbackAddress}")
                     // Prefer IPv4 addresses and skip link-local / loopback
                     if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
                         // strip any zone id if present (rare for IPv4, defensive)
                         val clean = hostAddress.substringBefore('%')
+                        android.util.Log.i("ConnectionManager", "Found local IP: $clean")
                         return clean
                     }
                 }
             }
-            "No IP"
+            "No IPv4 found"
         } catch (e: Exception) {
-            "Error: ${e::class.java.simpleName} ${e.message ?: "(no message)"}"
+            android.util.Log.e("ConnectionManager", "getLocalIPAddress: Exception", e)
+            "Error: ${e::class.java.simpleName}: ${e.message ?: "(no detail)"}"
         }
     }
 
     fun isWifiConnected(context: Context): Boolean {
         return try {
             val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            if (connectivityManager == null) return false
+                ?: return false
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val network = connectivityManager.activeNetwork ?: return false

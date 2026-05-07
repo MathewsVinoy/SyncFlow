@@ -88,7 +88,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateDeviceInfo() {
         val deviceName = ConnectionManager.getDeviceName(this)
-        val deviceIp = ConnectionManager.getLocalIPAddress()
+        val deviceIp = ConnectionManager.getLocalIPAddress(this)
         val isConnected = ConnectionManager.isWifiConnected(this)
 
         binding.deviceName.text = "Device: $deviceName"

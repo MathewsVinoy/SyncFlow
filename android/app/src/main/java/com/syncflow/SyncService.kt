@@ -75,6 +75,15 @@ class SyncService : Service() {
             try {
                 LogManager.addLog("Starting TCP/UDP networking...")
 
+                // Get device info
+                val deviceName = ConnectionManager.getDeviceName(this@SyncService)
+                val localIP = ConnectionManager.getLocalIPAddress(this@SyncService)
+                val isWifi = ConnectionManager.isWifiConnected(this@SyncService)
+                
+                LogManager.addLog("Device: $deviceName")
+                LogManager.addLog("Local IP: $localIP")
+                LogManager.addLog("WiFi connected: $isWifi")
+
                 // Call native networking initialization
                 val result = initializeNetworking()
                 LogManager.addLog("Networking init result: $result")
@@ -96,7 +105,7 @@ class SyncService : Service() {
     private suspend fun startMobilePeerMode() {
         withContext(Dispatchers.IO) {
             val deviceName = ConnectionManager.getDeviceName(this@SyncService)
-            val localIp = ConnectionManager.getLocalIPAddress()
+            val localIp = ConnectionManager.getLocalIPAddress(this@SyncService)
 
             ConnectionManager.setState(ConnectionManager.ConnectionState.CONNECTING)
             LogManager.addLog("Mobile peer mode enabled. Advertising $deviceName at $localIp:45455")
@@ -247,7 +256,7 @@ class SyncService : Service() {
     private fun updateNetworkStatus() {
         try {
             val isConnected = ConnectionManager.isWifiConnected(this)
-            val ipAddr = ConnectionManager.getLocalIPAddress()
+            val ipAddr = ConnectionManager.getLocalIPAddress(this)
 
             if (isConnected) {
                 ConnectionManager.setState(ConnectionManager.ConnectionState.CONNECTED)
