@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+android/app/build/
+android/.gradle/
+.gradle/
+*.a
+*.so
+*.o
+sync_messages.pb.cc
+sync_messages.pb.h
