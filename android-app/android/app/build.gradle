@@ -15,6 +15,12 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        // Desktop peer endpoint for mobile sync.
+        // Use adb reverse tcp:45455 tcp:45455 during development so the app can
+        // reach the desktop peer through USB even when LAN routing is unavailable.
+        buildConfigField "String", "SYNCFLOW_REMOTE_HOST", '"127.0.0.1"'
+        buildConfigField "int", "SYNCFLOW_REMOTE_PORT", "45455"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -48,6 +54,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         viewBinding = true
     }
 }

@@ -499,7 +499,11 @@ void PeerNode::log_startup() {
 }
 
 bool PeerNode::should_initiate(const PeerInfo& peer) const {
-    return !(peer.name == device_name_ && peer.ip == local_ip_);
+    if (peer.name == device_name_) {
+        return false;
+    }
+
+    return peer.ip != local_ip_;
 }
 
 bool PeerNode::is_active(const PeerInfo& peer) {
@@ -1216,6 +1220,12 @@ void PeerNode::udp_listener_loop() {
         }
 
         if (peer.name == device_name_ && peer.ip == local_ip_) {
+            continue;
+        }
+
+        if (peer.name == device_name_) {
+            logger_.info("ignoring self-advertisement from local device name on alternate interface: " +
+                         peer.name + " @ " + peer.ip + " (tcp port " + std::to_string(peer.tcp_port) + ")");
             continue;
         }
 

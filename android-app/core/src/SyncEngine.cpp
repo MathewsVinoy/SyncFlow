@@ -82,6 +82,13 @@ float SyncEngine::get_progress() const {
     return progress_;
 }
 
+std::string SyncEngine::get_last_error() const {
+    if (!network_manager_) {
+        return "network manager not initialized";
+    }
+    return network_manager_->last_error();
+}
+
 void SyncEngine::resolve_conflict(const std::string& filepath, bool keep_local) {
     // Conflict resolution logic
 }

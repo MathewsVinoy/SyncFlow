@@ -34,6 +34,7 @@ public:
     bool connect_to_peer();
     void disconnect();
     bool is_connected() const;
+    std::string last_error() const;
 
     void start_discovery(std::function<void(const DeviceInfo&)> on_device_found);
     void stop_discovery();
@@ -50,6 +51,7 @@ private:
     bool recv_exact(int fd, void* data, std::size_t size);
     bool handle_session(int fd);
     bool handle_incoming_file(int fd, const std::filesystem::path& output_path, std::uint64_t expected_size);
+    void set_last_error(const std::string& error);
 
     std::atomic<bool> discovering_;
     std::atomic<bool> server_running_;
@@ -65,6 +67,8 @@ private:
     std::string remote_host_;
     int remote_port_;
     std::filesystem::path receive_dir_;
+    mutable std::mutex error_mutex_;
+    std::string last_error_;
 };
 
 } // namespace network

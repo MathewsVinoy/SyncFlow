@@ -17,7 +17,10 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
 
         binding.startSyncButton.setOnClickListener {
-            val intent = Intent(this, SyncService::class.java)
+            val intent = Intent(this, SyncService::class.java).apply {
+                putExtra(SyncService.EXTRA_REMOTE_HOST, BuildConfig.SYNCFLOW_REMOTE_HOST)
+                putExtra(SyncService.EXTRA_REMOTE_PORT, BuildConfig.SYNCFLOW_REMOTE_PORT)
+            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 startForegroundService(intent)
             } else {

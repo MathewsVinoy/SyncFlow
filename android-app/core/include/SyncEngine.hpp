@@ -30,6 +30,7 @@ public:
     
     SyncState get_status() const;
     float get_progress() const;
+    std::string get_last_error() const;
 
     void resolve_conflict(const std::string& filepath, bool keep_local);
 

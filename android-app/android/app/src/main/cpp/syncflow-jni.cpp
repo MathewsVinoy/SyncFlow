@@ -75,3 +75,12 @@ Java_com_syncflow_SyncEngineWrapper_getProgress(JNIEnv* env, jobject thiz) {
     }
     return 0.0f;
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_syncflow_SyncEngineWrapper_getLastError(JNIEnv* env, jobject thiz) {
+    if (g_sync_engine) {
+        const auto error = g_sync_engine->get_last_error();
+        return env->NewStringUTF(error.c_str());
+    }
+    return env->NewStringUTF("sync engine not initialized");
+}

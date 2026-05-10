@@ -14,6 +14,7 @@ class SyncEngineWrapper {
     external fun stopSync()
     external fun getStatus(): Int
     external fun getProgress(): Float
+    external fun getLastError(): String
 
     companion object {
         const val STATUS_IDLE = 0

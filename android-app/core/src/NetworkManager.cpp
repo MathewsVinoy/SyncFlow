@@ -1,4 +1,5 @@
 #include "NetworkManager.hpp"
+#include <android/log.h>
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
@@ -16,6 +17,15 @@
 namespace {
 
 constexpr const char* kPeerMagic = "SYNCFLOW_PEER";
+constexpr const char* kLogTag = "SyncFlowNative";
+
+void log_info(const std::string& msg) {
+    __android_log_print(ANDROID_LOG_INFO, kLogTag, "%s", msg.c_str());
+}
+
+void log_error(const std::string& msg) {
+    __android_log_print(ANDROID_LOG_ERROR, kLogTag, "%s", msg.c_str());
+}
 
 void close_socket(int fd) {
     if (fd >= 0) {
@@ -103,21 +113,39 @@ void NetworkManager::set_receive_dir(const std::filesystem::path& receive_dir) {
 void NetworkManager::set_remote_peer(const std::string& host, int port) {
     remote_host_ = host;
     remote_port_ = port;
+    log_info("Configured remote peer: " + remote_host_ + ":" + std::to_string(remote_port_));
 }
 
 bool NetworkManager::is_connected() const {
     return connected_;
 }
 
+std::string NetworkManager::last_error() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return last_error_;
+}
+
+void NetworkManager::set_last_error(const std::string& error) {
+    {
+        std::lock_guard<std::mutex> lock(error_mutex_);
+        last_error_ = error;
+    }
+    if (!error.empty()) {
+        log_error(error);
+    }
+}
+
 bool NetworkManager::connect_with_timeout(int fd, const sockaddr_in& addr, std::chrono::seconds timeout, std::string& error_text) {
     const int old_flags = ::fcntl(fd, F_GETFL, 0);
     if (old_flags < 0) {
         error_text = std::strerror(errno);
+        set_last_error("fcntl(F_GETFL) failed: " + error_text);
         return false;
     }
 
     if (::fcntl(fd, F_SETFL, old_flags | O_NONBLOCK) != 0) {
         error_text = std::strerror(errno);
+        set_last_error("fcntl(F_SETFL O_NONBLOCK) failed: " + error_text);
         return false;
     }
 
@@ -129,6 +157,7 @@ bool NetworkManager::connect_with_timeout(int fd, const sockaddr_in& addr, std::
 
     if (errno != EINPROGRESS) {
         error_text = std::strerror(errno);
+        set_last_error("connect failed immediately: " + error_text);
         (void)::fcntl(fd, F_SETFL, old_flags);
         return false;
     }
@@ -144,6 +173,7 @@ bool NetworkManager::connect_with_timeout(int fd, const sockaddr_in& addr, std::
     const int select_rc = ::select(fd + 1, nullptr, &write_set, nullptr, &tv);
     if (select_rc <= 0) {
         error_text = (select_rc == 0) ? "timeout" : std::strerror(errno);
+        set_last_error("connect select failed: " + error_text);
         (void)::fcntl(fd, F_SETFL, old_flags);
         return false;
     }
@@ -152,12 +182,14 @@ bool NetworkManager::connect_with_timeout(int fd, const sockaddr_in& addr, std::
     socklen_t so_error_len = sizeof(so_error);
     if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) != 0) {
         error_text = std::strerror(errno);
+        set_last_error("getsockopt(SO_ERROR) failed: " + error_text);
         (void)::fcntl(fd, F_SETFL, old_flags);
         return false;
     }
 
     if (so_error != 0) {
         error_text = std::strerror(so_error);
+        set_last_error("connect completed with socket error: " + error_text);
         (void)::fcntl(fd, F_SETFL, old_flags);
         return false;
     }
@@ -215,8 +247,11 @@ bool NetworkManager::handle_session(int fd) {
                               (device_name_.empty() ? std::string("android") : device_name_) +
                               "|0.0.0.0|" + std::to_string(remote_port_) + "\n";
     if (!send_all(fd, hello.data(), hello.size())) {
+        set_last_error("failed to send HELLO to peer");
         return false;
     }
+
+    log_info("Session started with peer " + remote_host_ + ":" + std::to_string(remote_port_));
 
     std::filesystem::path current_base = receive_dir_.empty() ? std::filesystem::current_path() / "syncflow_received" : receive_dir_;
     std::string current_file_name;
@@ -225,6 +260,7 @@ bool NetworkManager::handle_session(int fd) {
     while (connected_) {
         std::string line;
         if (!recv_line(fd, line)) {
+            set_last_error("socket closed while waiting for data from peer");
             break;
         }
 
@@ -248,6 +284,7 @@ bool NetworkManager::handle_session(int fd) {
 
                 const auto output_path = safe_receive_path(current_base, current_file_name);
                 if (!handle_incoming_file(fd, output_path, current_expected_size)) {
+                    set_last_error("failed receiving single file payload: " + output_path.string());
                     return false;
                 }
                 current_file_name.clear();
@@ -278,6 +315,7 @@ bool NetworkManager::handle_session(int fd) {
 
             const auto output_path = safe_receive_path(current_base, relative_path);
             if (!handle_incoming_file(fd, output_path, current_expected_size)) {
+                set_last_error("failed receiving directory file payload: " + output_path.string());
                 return false;
             }
             continue;
@@ -295,11 +333,15 @@ bool NetworkManager::handle_session(int fd) {
 
 bool NetworkManager::connect_to_peer() {
     if (remote_host_.empty() || remote_port_ <= 0 || connected_) {
+        set_last_error("connect_to_peer rejected: invalid host/port or already connected");
         return false;
     }
 
+    log_info("Connecting to peer " + remote_host_ + ":" + std::to_string(remote_port_));
+
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
+        set_last_error("socket() failed: " + std::string(std::strerror(errno)));
         return false;
     }
 
@@ -307,12 +349,14 @@ bool NetworkManager::connect_to_peer() {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<std::uint16_t>(remote_port_));
     if (::inet_pton(AF_INET, remote_host_.c_str(), &addr.sin_addr) != 1) {
+        set_last_error("inet_pton failed for host: " + remote_host_);
         close_socket(fd);
         return false;
     }
 
     std::string connect_error;
     if (!connect_with_timeout(fd, addr, std::chrono::seconds(3), connect_error)) {
+        set_last_error("connect_with_timeout failed: " + connect_error + " (host=" + remote_host_ + ", port=" + std::to_string(remote_port_) + ")");
         close_socket(fd);
         return false;
     }
@@ -321,7 +365,10 @@ bool NetworkManager::connect_to_peer() {
         std::lock_guard<std::mutex> lock(socket_mutex_);
         socket_fd_ = fd;
         connected_ = true;
+        set_last_error("");
     }
+
+    log_info("TCP connected to peer " + remote_host_ + ":" + std::to_string(remote_port_));
 
     session_thread_ = std::thread([this, fd]() {
         (void)handle_session(fd);
@@ -342,6 +389,9 @@ void NetworkManager::disconnect() {
     }
 
     close_socket(fd);
+    if (fd >= 0) {
+        log_info("Disconnected from peer");
+    }
 
     if (session_thread_.joinable() && std::this_thread::get_id() != session_thread_.get_id()) {
         session_thread_.join();
@@ -391,6 +441,7 @@ void NetworkManager::stop_server() {
 bool NetworkManager::send_file(const std::string& ip, int port, const std::string& filepath) {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
+        set_last_error("send_file socket() failed: " + std::string(std::strerror(errno)));
         return false;
     }
 
