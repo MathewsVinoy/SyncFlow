@@ -7,6 +7,9 @@ class SyncEngineWrapper {
 
     external fun init()
     external fun addSyncFolder(path: String)
+    external fun setDeviceName(name: String)
+    external fun setRemotePeer(host: String, port: Int)
+    external fun setReceiveDir(path: String)
     external fun startSync()
     external fun stopSync()
     external fun getStatus(): Int

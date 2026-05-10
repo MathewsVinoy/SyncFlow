@@ -1,6 +1,7 @@
 #ifndef SYNC_ENGINE_HPP
 #define SYNC_ENGINE_HPP
 
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <memory>
@@ -21,6 +22,9 @@ public:
     ~SyncEngine();
 
     void add_sync_folder(const std::string& path);
+    void set_device_name(const std::string& name);
+    void set_remote_peer(const std::string& host, int port);
+    void set_receive_dir(const std::filesystem::path& receive_dir);
     void start_sync();
     void stop_sync();
     
@@ -34,6 +38,10 @@ private:
     SyncState state_;
     float progress_;
     std::unique_ptr<network::NetworkManager> network_manager_;
+    std::string device_name_;
+    std::string remote_host_;
+    int remote_port_;
+    std::filesystem::path receive_dir_;
 };
 
 } // namespace syncflow

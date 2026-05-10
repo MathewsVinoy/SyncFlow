@@ -5,17 +5,17 @@ plugins {
 }
 
 android {
-    namespace 'com.syncflow'
-    compileSdk 34
+    namespace = 'com.syncflow'
+    compileSdk = 34
 
     defaultConfig {
-        applicationId "com.syncflow"
-        minSdk 24
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        applicationId = "com.syncflow"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
 
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++17"
@@ -26,15 +26,15 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
     externalNativeBuild {
         cmake {
-            path "src/main/cpp/CMakeLists.txt"
-            version "3.22.1"
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -48,7 +48,7 @@ android {
     }
 
     buildFeatures {
-        viewBinding true
+        viewBinding = true
     }
 }
 

@@ -20,6 +20,33 @@ Java_com_syncflow_SyncEngineWrapper_addSyncFolder(JNIEnv* env, jobject thiz, jst
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_syncflow_SyncEngineWrapper_setDeviceName(JNIEnv* env, jobject thiz, jstring name) {
+    const char* native_name = env->GetStringUTFChars(name, nullptr);
+    if (g_sync_engine) {
+        g_sync_engine->set_device_name(native_name);
+    }
+    env->ReleaseStringUTFChars(name, native_name);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_syncflow_SyncEngineWrapper_setRemotePeer(JNIEnv* env, jobject thiz, jstring host, jint port) {
+    const char* native_host = env->GetStringUTFChars(host, nullptr);
+    if (g_sync_engine) {
+        g_sync_engine->set_remote_peer(native_host, static_cast<int>(port));
+    }
+    env->ReleaseStringUTFChars(host, native_host);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_syncflow_SyncEngineWrapper_setReceiveDir(JNIEnv* env, jobject thiz, jstring path) {
+    const char* native_path = env->GetStringUTFChars(path, nullptr);
+    if (g_sync_engine) {
+        g_sync_engine->set_receive_dir(native_path);
+    }
+    env->ReleaseStringUTFChars(path, native_path);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_syncflow_SyncEngineWrapper_startSync(JNIEnv* env, jobject thiz) {
     if (g_sync_engine) {
         g_sync_engine->start_sync();

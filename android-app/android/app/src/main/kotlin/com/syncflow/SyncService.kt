@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import java.io.File
 
 class SyncService : Service() {
 
@@ -16,10 +17,18 @@ class SyncService : Service() {
     override fun onCreate() {
         super.onCreate()
         engine.init()
+        engine.setDeviceName(Build.MODEL ?: "android")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val remoteHost = intent?.getStringExtra(EXTRA_REMOTE_HOST) ?: DEFAULT_REMOTE_HOST
+        val remotePort = intent?.getIntExtra(EXTRA_REMOTE_PORT, DEFAULT_REMOTE_PORT) ?: DEFAULT_REMOTE_PORT
+        val receiveDir = File(filesDir, DEFAULT_RECEIVE_DIR)
+
+        engine.setRemotePeer(remoteHost, remotePort)
+        engine.setReceiveDir(receiveDir.absolutePath)
+
         val notification = createNotification("Syncing files...")
         startForeground(1, notification)
         
@@ -57,5 +66,10 @@ class SyncService : Service() {
 
     companion object {
         const val CHANNEL_ID = "SyncFlowServiceChannel"
+        const val EXTRA_REMOTE_HOST = "remote_host"
+        const val EXTRA_REMOTE_PORT = "remote_port"
+        private const val DEFAULT_REMOTE_HOST = "127.0.0.1"
+        private const val DEFAULT_REMOTE_PORT = 45455
+        private const val DEFAULT_RECEIVE_DIR = "syncflow_received"
     }
 }
