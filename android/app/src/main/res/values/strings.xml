@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">syncflow</string>
+    <string name="connectivity_title">Connectivity status</string>
+    <string name="connectivity_state_connected">Connected</string>
+    <string name="connectivity_state_online">Online</string>
+    <string name="connectivity_message">Your device is ready to sync when a network is available.</string>
+    <string name="connectivity_preview_note">UI only preview</string>
 </resources>

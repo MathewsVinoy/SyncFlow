@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="connectivity_background">#F4F7F5</color>
+    <color name="connectivity_surface">#FFFFFF</color>
+    <color name="connectivity_primary_text">#123122</color>
+    <color name="connectivity_secondary_text">#5F6F68</color>
+    <color name="connectivity_tertiary_text">#8A968F</color>
+    <color name="connectivity_online">#2BC26B</color>
+    <color name="connectivity_online_soft">#E6F8ED</color>
+    <color name="connectivity_online_text">#167A42</color>
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
