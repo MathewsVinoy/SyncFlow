@@ -4,7 +4,11 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
+import com.syncflow.sync.SyncManager
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.DatagramPacket
@@ -300,12 +304,17 @@ object SyncPeerManager {
     private fun handleConnection(socket: Socket) {
         thread(name = "syncflow-connection-${socket.inetAddress.hostAddress}", isDaemon = true) {
             var endpointKey = "${socket.inetAddress.hostAddress ?: "unknown"}:${socket.port}"
+            val syncManager = SyncManager()
             try {
-                socket.soTimeout = 1_000
+                socket.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
                 val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
 
                 writer.println("CONNECTED_SUCCESS|$deviceName|$localIp")
+
+                var receivingFile = false
+                var currentFile: java.io.File? = null
+                var fileOutputStream: java.io.FileOutputStream? = null
 
                 while (running.get() && !socket.isClosed) {
                     val line = try {
@@ -349,20 +358,57 @@ object SyncPeerManager {
                                 emitStatus("connection acknowledged by $endpointKey")
                             }
                         }
+                        line.startsWith("SYNC_BEGIN|") -> {
+                            Log.d(TAG, "sync session started from peer")
+                            emitStatus("receiving sync from $endpointKey")
+                        }
+                        line.startsWith("FILE_ENTRY|") -> {
+                            receivingFile = true
+                            val parts = line.removePrefix("FILE_ENTRY|").split('|')
+                            if (parts.size >= 3) {
+                                val filename = parts[0]
+                                val size = parts[1].toLongOrNull() ?: 0L
+                                currentFile = syncManager.receiveFile(filename)
+                                if (currentFile != null) {
+                                    fileOutputStream = java.io.FileOutputStream(currentFile)
+                                    Log.d(TAG, "receiving file: $filename")
+                                } else {
+                                    Log.e(TAG, "failed to create file for: $filename")
+                                }
+                            }
+                        }
+                        line.startsWith("FILE_DONE|") -> {
+                            receivingFile = false
+                            fileOutputStream?.close()
+                            fileOutputStream = null
+                            val parts = line.removePrefix("FILE_DONE|").split('|')
+                            if (parts.size >= 2) {
+                                val filename = parts[0]
+                                val bytesReceived = parts[1].toLongOrNull() ?: 0L
+                                Log.d(TAG, "file received: $filename ($bytesReceived bytes)")
+                                writer.println("FILE_RECEIVED|$filename|$bytesReceived")
+                            }
+                        }
+                        line.startsWith("SYNC_END|") -> {
+                            Log.d(TAG, "sync session completed from peer")
+                            emitStatus("sync complete with $endpointKey")
+                        }
                         line.startsWith("SHARE_BUSY|") -> {
                             Log.w(TAG, "peer reported busy: $line")
                         }
-                        line.startsWith("FILE_RECEIVED|") || line.startsWith("SYNC_BEGIN|") || line.startsWith("SYNC_END|") || line.startsWith("FILE_ENTRY|") || line.startsWith("FILE_DONE|") -> {
-                            Log.d(TAG, "peer sync message: $line")
-                        }
                         else -> {
-                            Log.d(TAG, "peer message: $line")
+                            if (receivingFile && fileOutputStream != null && currentFile != null) {
+                                fileOutputStream!!.write(line.toByteArray(StandardCharsets.UTF_8))
+                            } else {
+                                Log.d(TAG, "peer message: $line")
+                            }
                         }
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "connection handler failed", e)
             } finally {
+                fileOutputStream?.close()
                 socket.close()
                 synchronized(statusLock) {
                     connections.remove(endpointKey)
@@ -374,5 +420,33 @@ object SyncPeerManager {
 
     private fun discoveryPayload(): String {
         return "$PROTOCOL_MAGIC|$deviceName|$localIp|$TCP_PORT\n"
+    }
+
+    fun syncFolder(peerIp: String, peerPort: Int, sourcePath: String) {
+        thread(name = "syncflow-send-$peerIp", isDaemon = true) {
+            val syncManager = SyncManager()
+            try {
+                val socket = Socket(peerIp, peerPort)
+                socket.soTimeout = 10_000
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+
+                writer.println("HELLO|$deviceName|$localIp|$TCP_PORT")
+                val response = reader.readLine()
+                
+                if (response?.startsWith("CONNECTED_SUCCESS|") == true) {
+                    emitStatus("syncing $sourcePath to $peerIp")
+                    syncManager.initiateSyncSession(writer, sourcePath)
+                    emitStatus("sync complete with $peerIp")
+                } else {
+                    Log.w(TAG, "peer did not respond with CONNECTED_SUCCESS")
+                }
+
+                socket.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "failed to sync folder to $peerIp", e)
+                emitStatus("sync failed: ${e.message}")
+            }
+        }
     }
 }
