@@ -39,4 +39,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     external fun getPeerStatus(): String
+
+    companion object {
+        init {
+            System.loadLibrary("syncflow")
+        }
+    }
 }
