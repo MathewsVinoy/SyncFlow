@@ -30,7 +30,9 @@
             android:orientation="vertical"
             android:padding="28dp">
 
+
             <TextView
+                android:id="@+id/connectivity_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="12dp"
@@ -40,16 +42,29 @@
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
+
             <TextView
+                android:id="@+id/connectivity_state_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
+                android:layout_marginBottom="8dp"
                 android:text="Connected"
                 android:textColor="@color/connectivity_primary_text"
                 android:textSize="32sp"
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/connectivity_device_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:text="Device: Unknown"
+                android:textColor="@color/connectivity_secondary_text"
+                android:textSize="14sp" />
+
+
+            <TextView
+                android:id="@+id/connectivity_pill"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
