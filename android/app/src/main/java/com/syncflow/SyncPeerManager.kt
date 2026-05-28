@@ -60,6 +60,7 @@ object SyncPeerManager {
 
         startTcpServer()
         startDiscoveryBroadcaster()
+        startDiscoveryListener()
         emitStatus("peer manager started")
     }
 
@@ -152,37 +153,121 @@ object SyncPeerManager {
     private fun startDiscoveryBroadcaster() {
         thread(name = "syncflow-discovery", isDaemon = true) {
             val payload = discoveryPayload().toByteArray(StandardCharsets.UTF_8)
+            var socket: DatagramSocket? = null
             try {
-                DatagramSocket().use { socket ->
-                    socket.reuseAddress = true
-                    socket.broadcast = true
-                    socket.bind(InetSocketAddress(0))
+                socket = DatagramSocket()
+                socket.reuseAddress = true
+                socket.broadcast = true
+                Log.d(TAG, "discovery broadcaster initialized on port ${socket.localPort}")
 
-                    while (running.get()) {
-                        try {
-                            socket.send(
-                                DatagramPacket(
-                                    payload,
-                                    payload.size,
-                                    InetSocketAddress(BROADCAST_ADDRESS, UDP_DISCOVERY_PORT)
-                                )
+                while (running.get()) {
+                    try {
+                        socket.send(
+                            DatagramPacket(
+                                payload,
+                                payload.size,
+                                InetSocketAddress(BROADCAST_ADDRESS, UDP_DISCOVERY_PORT)
                             )
-                        } catch (e: Exception) {
-                            Log.w(TAG, "failed to broadcast discovery packet", e)
-                        }
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "failed to broadcast discovery packet", e)
+                    }
 
-                        try {
-                            Thread.sleep(DISCOVERY_INTERVAL_MS)
-                        } catch (_: InterruptedException) {
-                            break
-                        }
+                    try {
+                        Thread.sleep(DISCOVERY_INTERVAL_MS)
+                    } catch (_: InterruptedException) {
+                        break
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "failed to initialize discovery broadcaster", e)
+            } finally {
+                socket?.close()
             }
         }
     }
+
+    private fun startDiscoveryListener() {
+        thread(name = "syncflow-discovery-listener", isDaemon = true) {
+            var socket: DatagramSocket? = null
+            try {
+                socket = DatagramSocket(UDP_DISCOVERY_PORT)
+                socket.reuseAddress = true
+                socket.broadcast = true
+                Log.d(TAG, "discovery listener started on port $UDP_DISCOVERY_PORT")
+
+                val buffer = ByteArray(1024)
+                while (running.get()) {
+                    try {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        socket.receive(packet)
+                        val message = String(packet.data, 0, packet.length, StandardCharsets.UTF_8).trim()
+                        
+                        if (message.startsWith(PROTOCOL_MAGIC)) {
+                            val parts = message.removePrefix("$PROTOCOL_MAGIC|").split('|')
+                            if (parts.size >= 3) {
+                                val peerName = parts[0]
+                                val peerIp = parts[1]
+                                val peerPort = parts[2]
+                                val peerAddress = packet.address.hostAddress ?: peerIp
+                                
+                                if (peerAddress != localIp) {
+                                    Log.d(TAG, "discovered peer: $peerName @ $peerAddress:$peerPort")
+                                    connectToPeer(peerName, peerAddress, peerPort.toIntOrNull() ?: TCP_PORT)
+                                }
+                            }
+                        }
+                    } catch (e: SocketTimeoutException) {
+                        continue
+                    } catch (e: Exception) {
+                        Log.w(TAG, "discovery listener error", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "failed to initialize discovery listener", e)
+            } finally {
+                socket?.close()
+            }
+        }
+    }
+
+    private fun connectToPeer(peerName: String, peerIp: String, peerPort: Int) {
+        thread(name = "syncflow-connect-$peerName", isDaemon = true) {
+            try {
+                val socket = Socket(peerIp, peerPort)
+                socket.soTimeout = 5_000
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+                
+                writer.println("HELLO|$deviceName|$localIp|$TCP_PORT")
+                
+                val response = reader.readLine()
+                if (response?.startsWith("CONNECTED_SUCCESS|") == true) {
+                    val endpointKey = "$peerName@$peerIp:$peerPort"
+                    synchronized(statusLock) {
+                        connections.clear()
+                        connections.add(endpointKey)
+                    }
+                    emitStatus("connected to $endpointKey")
+                    
+                    while (running.get() && !socket.isClosed) {
+                        try {
+                            val line = reader.readLine() ?: break
+                            if (line.isNotBlank()) {
+                                Log.d(TAG, "peer message: $line")
+                            }
+                        } catch (_: SocketTimeoutException) {
+                            continue
+                        }
+                    }
+                }
+                socket.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "failed to connect to peer $peerName", e)
+            }
+        }
+    }
+
 
     private fun startTcpServer() {
         thread(name = "syncflow-tcp-server", isDaemon = true) {
