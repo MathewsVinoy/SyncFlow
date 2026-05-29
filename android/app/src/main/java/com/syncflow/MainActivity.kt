@@ -25,9 +25,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { renderStatus(status) }
         }
 
-        if (SyncService.isServiceEnabled(this)) {
-            SyncService.startService(this)
-        }
+        SyncService.startService(this)
 
         renderStatus(SyncPeerManager.snapshot())
     }
