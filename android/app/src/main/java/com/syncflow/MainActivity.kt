@@ -10,6 +10,7 @@ import com.syncflow.service.SyncService
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private var serviceStartRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,9 +26,16 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { renderStatus(status) }
         }
 
-        SyncService.startService(this)
-
         renderStatus(SyncPeerManager.snapshot())
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        if (!serviceStartRequested) {
+            serviceStartRequested = true
+            SyncService.startService(this)
+        }
     }
 
     override fun onDestroy() {
