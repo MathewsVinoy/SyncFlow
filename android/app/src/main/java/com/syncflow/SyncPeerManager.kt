@@ -305,16 +305,16 @@ object SyncPeerManager {
         thread(name = "syncflow-connection-${socket.inetAddress.hostAddress}", isDaemon = true) {
             var endpointKey = "${socket.inetAddress.hostAddress ?: "unknown"}:${socket.port}"
             val syncManager = SyncManager()
+            var fileOutputStream: FileOutputStream? = null
+            var receivingFile = false
+            var currentFile: File? = null
+            
             try {
                 socket.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
                 val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
 
                 writer.println("CONNECTED_SUCCESS|$deviceName|$localIp")
-
-                var receivingFile = false
-                var currentFile: java.io.File? = null
-                var fileOutputStream: java.io.FileOutputStream? = null
 
                 while (running.get() && !socket.isClosed) {
                     val line = try {
