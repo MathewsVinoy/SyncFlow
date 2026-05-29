@@ -1,8 +1,10 @@
 package com.syncflow
 
 import android.os.Bundle
+import android.content.Intent
 import androidx.appcompat.app.AppCompatActivity
 import com.syncflow.databinding.ActivityMainBinding
+import com.syncflow.ui.SettingsActivity
 
 class MainActivity : AppCompatActivity() {
 
@@ -14,15 +16,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        SyncPeerManager.setStatusListener { status ->
-            runOnUiThread { renderStatus(status) }
+        binding.openSettingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
-        SyncPeerManager.start(applicationContext)
         renderStatus(SyncPeerManager.snapshot())
     }
 
     override fun onDestroy() {
-        SyncPeerManager.stop()
         super.onDestroy()
     }
 

@@ -33,6 +33,7 @@ object SyncPeerManager {
     private const val BROADCAST_ADDRESS = "255.255.255.255"
     private const val PROTOCOL_MAGIC = "SYNCFLOW_PEER"
     private const val DISCOVERY_INTERVAL_MS = 2_000L
+    private const val DEFAULT_DOWNLOAD_DIR = "/storage/emulated/0/Download"
 
     private val running = AtomicBoolean(false)
     private val statusLock = Any()
@@ -46,6 +47,9 @@ object SyncPeerManager {
 
     @Volatile
     private var statusListener: ((PeerStatus) -> Unit)? = null
+
+    @Volatile
+    private var downloadDirectory: String = DEFAULT_DOWNLOAD_DIR
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -66,6 +70,12 @@ object SyncPeerManager {
         startDiscoveryBroadcaster()
         startDiscoveryListener()
         emitStatus("peer manager started")
+    }
+
+    fun setDownloadDirectory(path: String) {
+        if (path.isNotBlank()) {
+            downloadDirectory = path
+        }
     }
 
     fun stop() {
@@ -368,7 +378,7 @@ object SyncPeerManager {
                             if (parts.size >= 3) {
                                 val filename = parts[0]
                                 val size = parts[1].toLongOrNull() ?: 0L
-                                currentFile = syncManager.receiveFile(filename)
+                                currentFile = syncManager.receiveFile(filename, size, downloadDirectory)
                                 if (currentFile != null) {
                                     fileOutputStream = java.io.FileOutputStream(currentFile)
                                     Log.d(TAG, "receiving file: $filename")
@@ -448,5 +458,21 @@ object SyncPeerManager {
                 emitStatus("sync failed: ${e.message}")
             }
         }
+    }
+
+    fun syncFolderToConnections(sourcePath: String) {
+        snapshot().connections.forEach { endpoint ->
+            parseEndpoint(endpoint)?.let { (peerIp, peerPort) ->
+                syncFolder(peerIp, peerPort, sourcePath)
+            }
+        }
+    }
+
+    private fun parseEndpoint(endpoint: String): Pair<String, Int>? {
+        val peerPart = endpoint.substringAfter('@', endpoint)
+        val peerIp = peerPart.substringBefore(':').trim()
+        val peerPort = peerPart.substringAfter(':', TCP_PORT.toString()).toIntOrNull() ?: TCP_PORT
+
+        return if (peerIp.isBlank()) null else peerIp to peerPort
     }
 }

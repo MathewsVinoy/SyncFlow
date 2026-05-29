@@ -9,11 +9,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.syncflow.MainActivity
 import com.syncflow.SyncPeerManager
+import com.syncflow.file.FileMonitor
+import java.io.File
 
 class SyncService : Service() {
 
@@ -23,8 +26,11 @@ class SyncService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val PREFS_NAME = "syncflow_prefs"
         private const val PREF_SERVICE_ENABLED = "service_enabled"
+        private const val PREF_SYNC_SOURCE_PATH = "sync_source_path"
+        private const val PREF_DOWNLOAD_DIR = "download_dir"
 
         fun startService(context: Context) {
+            setServiceEnabled(context, true)
             val intent = Intent(context, SyncService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -34,6 +40,7 @@ class SyncService : Service() {
         }
 
         fun stopService(context: Context) {
+            setServiceEnabled(context, false)
             val intent = Intent(context, SyncService::class.java)
             context.stopService(intent)
         }
@@ -51,6 +58,7 @@ class SyncService : Service() {
 
     private lateinit var prefs: SharedPreferences
     private var isSyncRunning = false
+    private var fileMonitor: FileMonitor? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -68,8 +76,9 @@ class SyncService : Service() {
             
             try {
                 SyncPeerManager.start(this)
+                SyncPeerManager.setDownloadDirectory(currentDownloadDirectory())
+                startFileMonitorIfConfigured()
                 updateNotification("Running and listening for peers")
-                setServiceEnabled(this, true)
                 Log.d(TAG, "SyncPeerManager started in background service")
             } catch (e: Exception) {
                 Log.e(TAG, "failed to start SyncPeerManager", e)
@@ -84,9 +93,9 @@ class SyncService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "SyncService destroying")
         try {
+            stopFileMonitor()
             SyncPeerManager.stop()
             isSyncRunning = false
-            setServiceEnabled(this, false)
         } catch (e: Exception) {
             Log.e(TAG, "failed to stop SyncPeerManager", e)
         }
@@ -131,5 +140,42 @@ class SyncService : Service() {
         val notification = createNotification(status)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun startFileMonitorIfConfigured() {
+        stopFileMonitor()
+
+        val sourcePath = prefs.getString(PREF_SYNC_SOURCE_PATH, null)?.trim().orEmpty()
+        if (sourcePath.isBlank()) {
+            Log.d(TAG, "no sync source configured")
+            return
+        }
+
+        val sourceFile = File(sourcePath)
+        if (!sourceFile.exists()) {
+            Log.w(TAG, "configured sync source does not exist: $sourcePath")
+            updateNotification("Sync source not found")
+            return
+        }
+
+        fileMonitor = FileMonitor(sourcePath) { event ->
+            Log.d(TAG, "sync source changed: ${event.type} ${event.path}")
+            SyncPeerManager.syncFolderToConnections(sourcePath)
+        }.also { monitor ->
+            if (monitor.isValid()) {
+                monitor.start()
+                updateNotification("Watching sync source")
+            }
+        }
+    }
+
+    private fun stopFileMonitor() {
+        fileMonitor?.stop()
+        fileMonitor = null
+    }
+
+    private fun currentDownloadDirectory(): String {
+        return prefs.getString(PREF_DOWNLOAD_DIR, null)
+            ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
     }
 }

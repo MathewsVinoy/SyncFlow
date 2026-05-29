@@ -16,9 +16,21 @@ class FileMonitor(private val path: String, private val callback: (event: FileCh
         val timestamp: Long = System.currentTimeMillis()
     )
 
-    private val observer = object : FileObserver(path, ALL_EVENTS) {
+    private val targetFile = File(path)
+    private val watchPath = when {
+        targetFile.isDirectory -> targetFile.absolutePath
+        targetFile.parentFile != null -> targetFile.parentFile.absolutePath
+        else -> targetFile.absolutePath
+    }
+    private val watchedFileName = if (targetFile.isFile) targetFile.name else null
+
+    private val observer = object : FileObserver(watchPath, ALL_EVENTS) {
         override fun onEvent(event: Int, path: String?) {
             if (path == null) return
+
+            if (watchedFileName != null && path != watchedFileName) {
+                return
+            }
 
             val eventType = when (event) {
                 CREATE -> "CREATE"
@@ -30,7 +42,7 @@ class FileMonitor(private val path: String, private val callback: (event: FileCh
             }
 
             Log.d(TAG, "file monitor event: $eventType on $path")
-            callback(FileChangeEvent(eventType, path))
+            callback(FileChangeEvent(eventType, File(watchPath, path).absolutePath))
         }
     }
 
@@ -45,6 +57,6 @@ class FileMonitor(private val path: String, private val callback: (event: FileCh
     }
 
     fun isValid(): Boolean {
-        return File(path).exists() && File(path).isDirectory
+        return targetFile.exists() && (targetFile.isDirectory || targetFile.isFile)
     }
 }
