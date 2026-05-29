@@ -19,7 +19,7 @@ class FileMonitor(private val path: String, private val callback: (event: FileCh
     private val targetFile = File(path)
     private val watchPath = when {
         targetFile.isDirectory -> targetFile.absolutePath
-        targetFile.parentFile != null -> targetFile.parentFile.absolutePath
+        targetFile.parentFile != null -> targetFile.parentFile?.absolutePath ?: targetFile.absolutePath
         else -> targetFile.absolutePath
     }
     private val watchedFileName = if (targetFile.isFile) targetFile.name else null
