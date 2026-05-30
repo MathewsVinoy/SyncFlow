@@ -2,6 +2,8 @@ package com.syncflow
 
 import android.os.Bundle
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.app.AppCompatActivity
 import com.syncflow.databinding.ActivityMainBinding
 import com.syncflow.ui.SettingsActivity
@@ -11,6 +13,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var serviceStartRequested = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val statusUpdateRunnable = object : Runnable {
+        override fun run() {
+            SyncPeerManager.updateStatus()
+            handler.postDelayed(this, 1000) // Update every 1 second
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -23,7 +32,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         SyncPeerManager.setStatusListener { status ->
-            runOnUiThread { renderStatus(status) }
+            renderStatus(status)
         }
 
         renderStatus(SyncPeerManager.snapshot())
@@ -36,10 +45,18 @@ class MainActivity : AppCompatActivity() {
             serviceStartRequested = true
             SyncService.startService(this)
         }
+
+        handler.post(statusUpdateRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        handler.removeCallbacks(statusUpdateRunnable)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacks(statusUpdateRunnable)
     }
 
     private fun renderStatus(status: PeerStatus) {
