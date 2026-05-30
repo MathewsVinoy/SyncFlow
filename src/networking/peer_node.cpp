@@ -1313,4 +1313,41 @@ void PeerNode::tcp_server_loop() {
     close_socket(fd);
 }
 
+bool PeerNode::trigger_folder_sync(const std::filesystem::path& path) {
+    if (!running_) {
+        logger_.info("Cannot trigger folder sync: peer node is not running");
+        return false;
+    }
+
+    if (path.empty()) {
+        logger_.info("Cannot trigger folder sync: path is empty");
+        return false;
+    }
+
+    if (!std::filesystem::exists(path)) {
+        logger_.info("Cannot trigger folder sync: path does not exist: " + path.string());
+        return false;
+    }
+
+    if (!std::filesystem::is_directory(path)) {
+        logger_.info("Cannot trigger folder sync: path is not a directory: " + path.string());
+        return false;
+    }
+
+    std::lock_guard<std::mutex> guard(active_mutex_);
+
+    if (active_connections_.empty()) {
+        logger_.info("No active connections to sync with");
+        return false;
+    }
+
+    logger_.info("Triggering folder sync for path: " + path.string() + " with " + std::to_string(active_connections_.size()) + " peer(s)");
+
+    file_sync_config_.source_path = path;
+    file_sync_config_.enabled = true;
+
+    logger_.info("Folder sync triggered successfully for: " + path.string());
+    return true;
+}
+
 }  // namespace syncflow::networking

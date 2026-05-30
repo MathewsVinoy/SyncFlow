@@ -12,4 +12,5 @@ object SyncNative {
     external fun startPeer(deviceName: String?, configPath: String?): Boolean
     external fun stopPeer(): Boolean
     external fun statusSummary(): String
+    external fun triggerFolderSync(path: String): Boolean
 }

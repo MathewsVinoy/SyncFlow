@@ -22,6 +22,7 @@ public:
     void run();
     void stop();
     std::string status_summary() const;
+    bool trigger_folder_sync(const std::filesystem::path& path);
 
 private:
     std::filesystem::path config_path_;

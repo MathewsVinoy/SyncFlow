@@ -3,6 +3,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
+#include <filesystem>
 #include <android/log.h>
 
 #include "syncflow/networking/peer_node.h"
@@ -83,5 +84,32 @@ Java_com_syncflow_SyncNative_statusSummary(JNIEnv* env, jclass /*cls*/) {
     } catch (const std::exception& e) {
         __android_log_print(ANDROID_LOG_ERROR, "SyncFlowNative", "statusSummary exception: %s", e.what());
         return env->NewStringUTF("");
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_syncflow_SyncNative_triggerFolderSync(JNIEnv* env, jclass /*cls*/, jstring jpath) {
+    const char* path = jpath ? env->GetStringUTFChars(jpath, nullptr) : nullptr;
+    
+    if (!path) {
+        __android_log_print(ANDROID_LOG_ERROR, "SyncFlowNative", "triggerFolderSync: null path");
+        return JNI_FALSE;
+    }
+
+    std::lock_guard<std::mutex> guard(g_node_mutex);
+    if (!g_node) {
+        __android_log_print(ANDROID_LOG_WARN, "SyncFlowNative", "triggerFolderSync: peer node not running");
+        env->ReleaseStringUTFChars(jpath, path);
+        return JNI_FALSE;
+    }
+
+    try {
+        const bool result = g_node->trigger_folder_sync(std::filesystem::path(path));
+        env->ReleaseStringUTFChars(jpath, path);
+        return result ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_ERROR, "SyncFlowNative", "triggerFolderSync exception: %s", e.what());
+        env->ReleaseStringUTFChars(jpath, path);
+        return JNI_FALSE;
     }
 }
