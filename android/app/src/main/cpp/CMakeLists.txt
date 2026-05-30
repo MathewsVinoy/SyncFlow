@@ -24,14 +24,42 @@ project("syncflow")
 # System.loadLibrary() and pass the name of the library defined here;
 # for GameActivity/NativeActivity derived applications, the same library name must be
 # used in the AndroidManifest.xml file.
-add_library(${CMAKE_PROJECT_NAME} SHARED
-        # List C/C++ source files with relative paths to this CMakeLists.txt.
-        native-lib.cpp)
+file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_CORE
+        "${CMAKE_SOURCE_DIR}/../../../../../src/core/*.cpp"
+        "${CMAKE_SOURCE_DIR}/../../../../../src/core/*.c"
+)
+file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_FILE_SYNC
+        "${CMAKE_SOURCE_DIR}/../../../../../src/file_sync/*.cpp"
+)
+file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_NETWORKING
+        "${CMAKE_SOURCE_DIR}/../../../../../src/networking/*.cpp"
+)
+file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_PLATFORM
+        "${CMAKE_SOURCE_DIR}/../../../../../src/platform/*.cpp"
+)
 
-# Specifies libraries CMake should link to your target library. You
-# can link libraries from various origins, such as libraries defined in this
-# build script, prebuilt third-party libraries, or Android system libraries.
+set(SYNCFLOW_DESKTOP_SOURCES ${SYNCFLOW_DESKTOP_SOURCES_CORE}
+    ${SYNCFLOW_DESKTOP_SOURCES_FILE_SYNC}
+    ${SYNCFLOW_DESKTOP_SOURCES_NETWORKING}
+        ${SYNCFLOW_DESKTOP_SOURCES_PLATFORM}
+)
+
+set(SYNCFLOW_STUB_SOURCES
+        native-lib.cpp
+        native-peer.cpp
+)
+
+list(APPEND SYNCFLOW_DESKTOP_SOURCES ${SYNCFLOW_STUB_SOURCES})
+
+add_library(${CMAKE_PROJECT_NAME} SHARED ${SYNCFLOW_DESKTOP_SOURCES})
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/../../../../../include"
+)
+
+find_package(Threads REQUIRED)
+
 target_link_libraries(${CMAKE_PROJECT_NAME}
-        # List libraries link to the target library
         android
-        log)
+        log
+        Threads::Threads)

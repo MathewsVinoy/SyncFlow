@@ -17,7 +17,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.syncflow.MainActivity
-import com.syncflow.SyncPeerManager
+import com.syncflow.SyncNative
 import com.syncflow.file.FileMonitor
 import java.io.File
 
@@ -87,11 +87,18 @@ class SyncService : Service() {
                     createNotification("Initializing"),
                     foregroundServiceType
                 )
-                SyncPeerManager.start(this)
-                SyncPeerManager.setDownloadDirectory(currentDownloadDirectory())
+                val started = try {
+                    SyncNative.startPeer(null, null)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "native peer start failed", t)
+                    false
+                }
+                if (!started) {
+                    Log.e(TAG, "failed to start native peer")
+                }
                 startFileMonitorIfConfigured()
                 updateNotification("Running and listening for peers")
-                Log.d(TAG, "SyncPeerManager started in background service")
+                Log.d(TAG, "native peer start requested")
             } catch (e: ForegroundServiceStartNotAllowedException) {
                 Log.e(TAG, "foreground service start not allowed", e)
                 isSyncRunning = false
@@ -110,13 +117,17 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "SyncService destroying")
-        try {
-            stopFileMonitor()
-            SyncPeerManager.stop()
-            isSyncRunning = false
-        } catch (e: Exception) {
-            Log.e(TAG, "failed to stop SyncPeerManager", e)
-        }
+            try {
+                stopFileMonitor()
+                try {
+                    SyncNative.stopPeer()
+                } catch (t: Throwable) {
+                    Log.e(TAG, "native peer stop failed", t)
+                }
+                isSyncRunning = false
+            } catch (e: Exception) {
+                Log.e(TAG, "failed to stop native peer", e)
+            }
         super.onDestroy()
     }
 
@@ -178,7 +189,13 @@ class SyncService : Service() {
 
         fileMonitor = FileMonitor(sourcePath) { event ->
             Log.d(TAG, "sync source changed: ${event.type} ${event.path}")
-            SyncPeerManager.syncFolderToConnections(sourcePath)
+            try {
+                // TODO: call into native peer to trigger sync for changed folder
+                val status = SyncNative.statusSummary()
+                Log.d(TAG, "native status: $status")
+            } catch (t: Throwable) {
+                Log.w(TAG, "failed to query native status", t)
+            }
         }.also { monitor ->
             if (monitor.isValid()) {
                 monitor.start()
