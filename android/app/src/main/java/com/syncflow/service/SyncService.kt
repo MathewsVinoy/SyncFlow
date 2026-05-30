@@ -190,11 +190,14 @@ class SyncService : Service() {
         fileMonitor = FileMonitor(sourcePath) { event ->
             Log.d(TAG, "sync source changed: ${event.type} ${event.path}")
             try {
-                // TODO: call into native peer to trigger sync for changed folder
-                val status = SyncNative.statusSummary()
-                Log.d(TAG, "native status: $status")
+                val success = SyncNative.triggerFolderSync(sourcePath)
+                if (success) {
+                    Log.d(TAG, "folder sync triggered for: $sourcePath")
+                } else {
+                    Log.w(TAG, "failed to trigger folder sync for: $sourcePath")
+                }
             } catch (t: Throwable) {
-                Log.w(TAG, "failed to query native status", t)
+                Log.e(TAG, "failed to trigger folder sync", t)
             }
         }.also { monitor ->
             if (monitor.isValid()) {
