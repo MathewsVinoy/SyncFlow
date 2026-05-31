@@ -138,6 +138,7 @@ class SettingsActivity : AppCompatActivity() {
         syncStatusText.text = buildString {
             appendLine(if (isServiceRunning) "Background sync is RUNNING" else "Background sync is STOPPED")
             appendLine("Sync source: $syncSource")
+            appendLine("Receive location: $downloadDir")
             appendLine("Download dir: $downloadDir")
             append("Storage access: $storageAccess")
         }

@@ -87,8 +87,12 @@ class SyncService : Service() {
                     createNotification("Initializing"),
                     foregroundServiceType
                 )
+                
+                val downloadDir = currentDownloadDirectory()
+                val configPath = createConfigFile(downloadDir)
+                
                 val started = try {
-                    SyncNative.startPeer(null, null)
+                    SyncNative.startPeer(null, configPath)
                 } catch (t: Throwable) {
                     Log.e(TAG, "native peer start failed", t)
                     false
@@ -215,5 +219,29 @@ class SyncService : Service() {
     private fun currentDownloadDirectory(): String {
         return prefs.getString(PREF_DOWNLOAD_DIR, null)
             ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
+    }
+
+    private fun createConfigFile(downloadDir: String): String {
+        return try {
+            val configDir = getFilesDir()
+            val configFile = File(configDir, "syncflow_config.json")
+            
+            val config = """
+                {
+                  "enabled": true,
+                  "receive_dir": "$downloadDir",
+                  "source_path": "",
+                  "device_name": ""
+                }
+            """.trimIndent()
+            
+            configFile.writeText(config)
+            Log.d(TAG, "Config file created: ${configFile.absolutePath}")
+            Log.d(TAG, "Receive directory set to: $downloadDir")
+            configFile.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create config file", e)
+            ""
+        }
     }
 }
