@@ -37,11 +37,15 @@ file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_NETWORKING
 file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_PLATFORM
         "${CMAKE_SOURCE_DIR}/../../../../../src/platform/*.cpp"
 )
+file(GLOB_RECURSE SYNCFLOW_DESKTOP_SOURCES_SECURITY
+        "${CMAKE_SOURCE_DIR}/../../../../../src/security/*.cpp"
+)
 
 set(SYNCFLOW_DESKTOP_SOURCES ${SYNCFLOW_DESKTOP_SOURCES_CORE}
     ${SYNCFLOW_DESKTOP_SOURCES_FILE_SYNC}
     ${SYNCFLOW_DESKTOP_SOURCES_NETWORKING}
         ${SYNCFLOW_DESKTOP_SOURCES_PLATFORM}
+        ${SYNCFLOW_DESKTOP_SOURCES_SECURITY}
 )
 
 set(SYNCFLOW_STUB_SOURCES
@@ -58,8 +62,11 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
         android
         log
-        Threads::Threads)
+        Threads::Threads
+        OpenSSL::Crypto
+        OpenSSL::SSL)
