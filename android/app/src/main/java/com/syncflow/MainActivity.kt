@@ -48,6 +48,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        binding.openFileActivityButton.setOnClickListener {
+            startActivity(Intent(this, FileTransferActivity::class.java))
+        }
+
         SyncPeerManager.setStatusListener { status ->
             renderStatus(status)
         }

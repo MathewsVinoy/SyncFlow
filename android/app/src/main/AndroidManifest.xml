@@ -35,6 +35,9 @@
         <activity
             android:name=".ui.SettingsActivity"
             android:exported="false" />
+        <activity
+            android:name=".FileTransferActivity"
+            android:exported="false" />
         <service
             android:name=".service.SyncService"
             android:exported="false"

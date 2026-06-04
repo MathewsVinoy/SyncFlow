@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.syncflow.MainActivity
 import com.syncflow.SyncNative
+import com.syncflow.FileActivityManager
 import com.syncflow.file.FileMonitor
 import java.io.File
 
@@ -197,6 +198,11 @@ class SyncService : Service() {
                 val success = SyncNative.triggerFolderSync(sourcePath)
                 if (success) {
                     Log.d(TAG, "folder sync triggered for: $sourcePath")
+                    FileActivityManager.logFileUpdated(
+                        fileName = event.path.substringAfterLast(File.separator),
+                        filePath = event.path,
+                        size = File(event.path).length()
+                    )
                 } else {
                     Log.w(TAG, "failed to trigger folder sync for: $sourcePath")
                 }
